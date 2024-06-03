@@ -36,7 +36,7 @@ std::string join(std::string sep, T x, Args... args) {
 }
 
 template <typename T>
-std::string toHexStr(T x, bool smart = true, bool ox = false) {
+std::string toHexStr(T x, bool ox = false, bool smart = true) {
   std::ostringstream os;
 
   unsigned n = sizeof(T);
@@ -110,5 +110,9 @@ private:
       std::cerr << "!!! " << ex.what() << "\n";                                \
     }                                                                          \
   } while (false)
+
+DEFINE_EXCEPTION(Unreachable)
+
+#define UNREACHABLE(...) THROW(NAME, __VA_ARGS__)
 
 #endif

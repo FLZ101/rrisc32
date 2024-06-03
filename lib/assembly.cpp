@@ -1,13 +1,15 @@
 #include "assembly.h"
 
+#include <algorithm>
 #include <fstream>
+#include <functional>
 
 namespace assembly {
 
-#define INVALID_SYMBOL()                                                       \
-  THROW(AssemblyError, "invalid symbol", curLine + 1, lines[curLine])
+#define INVALID_SYMBOL_NAME(name)                                                       \
+  THROW(AssemblyError, "invalid symbol", curLine + 1, name)
 
-#define DUPLICATED_SYMBOL()                                                    \
+#define DUPLICATED_SYMBOL_NAME()                                                    \
   THROW(AssemblyError, "duplicated symbol", curLine + 1, lines[curLine])
 
 #define UNKNOWN_SECTION_NAME()                                                 \
@@ -27,6 +29,24 @@ namespace assembly {
 
 #define UNKNOWN_DIRECTIVE()                                                    \
   THROW(AssemblyError, "unknown directive", curLine + 1, lines[curLine])
+
+const Label *Section::findLabelB(char c, unsigned line) {
+  auto it = std::lower_bound(labels.begin(), labels.end(),
+    [](const Label &a, const Label &b) { return a.line < b.line; });
+  while (--it >= labels.begin())
+    if (it->c == c)
+      return &*it;
+  return nullptr;
+}
+
+const Label *Section::findLabelF(char c, unsigned line) {
+  auto it = std::lower_bound(labels.begin(), labels.end(),
+    [](const Label &a, const Label &b) { return a.line <= b.line; });
+  while (it < labels.end())
+    if (it->c == c)
+      return &*it;
+  return nullptr;
+}
 
 void Assembler::run() {
   {
@@ -51,6 +71,209 @@ void Assembler::run() {
   }
 }
 
+s64 Assembler::parseInt(char c, bool hex) {
+  if (isDigit(c))
+    return c - '0';
+  if (hex && isOneOf(c, "abcdef"))
+    return c - 'a';
+  UNREACHABLE();
+}
+
+s64 Assembler::parseInt(std::string s) {
+  bool hex = false;
+  if (s.starts_with("0x")) {
+    s = substr(s, 2);
+    hex = true;
+  }
+  s64 res = 0;
+  for (char c : s) {
+    res *= hex ? 16 : 10;
+    res += parseInt(c, hex);
+  }
+  return res;
+}
+
+void Assembler::tokenizeExpr(std::string s, std::vector<ExprToken> &tokens) {
+  s += "\n\n";
+
+  enum {
+    Begin,
+    Int,
+    Hex,
+    Sym,
+    Func,
+    End
+  };
+  auto state = Begin;
+  unsigned j = 0;
+  for (unsigned i = 0; i < s.size(); ++i) {
+    char c = s[i];
+
+#define UNEXPECTED_CHAR() \
+  THROW(AssemblyError, "unexpected character", curLine + 1, s, i, c, toHexStr(c, true))
+
+#define INVALID_SYM_TOKEN(tk) \
+  THROW(AssemblyError, "invalid Sym token", curLine + 1, tk)
+
+#define INVALID_INT_TOKEN(tk) \
+  THROW(AssemblyError, "invalid Int token", curLine + 1, tk)
+
+    switch (state) {
+    case Begin:
+      if (isSpace(c))
+        continue;
+      if (isDigit(c)) {
+        j = i;
+        if (c == '0' && i + 1 < s.size() && s[i+1] == 'x') {
+          state = Hex;
+          ++i;
+        } else {
+          state = Int;
+        }
+      } else if (c == '$') {
+        j = i;
+        state = Sym;
+      } else if (isAlpha(c) || isOperatorChar(c) || c == '_') {
+        j = i;
+        state = Func;
+      } else if (c == '\n') {
+        state = End;
+      } else if (c == '(') {
+        toke.push_back({.type = ExprToken::LPar});
+      } else if (c == ')') {
+        toke.push_back({.type = ExprToken::RPar});
+      } else {
+        UNEXPECTED_CHAR();
+      }
+      break;
+    case Int:
+    case Hex:
+      if (isDigit(c))
+        continue;
+      if (state == Hex && isOneOf("abcdef"))
+        continue;
+      if (isSpace(c) || isOneOf(c, "()\n")) {
+        std::string tk = substr(s, j, i);
+        if (tk == "0x")
+          INVALID_INT_TOKEN(tk);
+        tokens.push_back({.type = ExprToken::Int, .i = parseInt(tk)});
+        --i;
+        state = Begin;
+      } else {
+        UNEXPECTED_CHAR();
+      }
+      break;
+    case Sym:
+      if (isSymbolChar(c))
+        continue;
+      if (isSpace(c) || isOneOf(c, "()\n")) {
+        std::string tk = substr(s, j, i);
+        if (tk.size() < 2)
+          INVALID_SYM_TOKEN(tk);
+        if (isDigit(tk[1])) {
+          if (tk.size() != 3 || !isOneOf(tk[2], "bf"))
+            INVALID_SYM_TOKEN(tk);
+        }
+        tokens.push_back({.type = ExprToken::Sym, .s = substr(tk, 1)});
+        --i;
+        state = Begin;
+      } else {
+        UNEXPECTED_CHAR();
+      }
+      break;
+    case Func:
+      if (isAlpha(c) || isOperatorChar(c) || c == '_' || isDigit(c))
+        continue;
+      if (isSpace(c) || isOneOf(c, "()\n")) {
+        tokens.push_back({.type = ExprToken::Func, .s =substr(s, j, i)});
+        --i;
+        state = Begin;
+      } else {
+        UNEXPECTED_CHAR();
+      }
+      break;
+    case End:
+      tokens.push_back({.type = ExprToken::Err);
+      return;
+    }
+  }
+}
+
+std::unique_ptr<Expr> Assembler::parseExpr(const std::string &s) {
+  std::vector<ExprToken> tokens;
+  tokenizeExpr(s, tokens);
+  return parseExpr(tokens);
+}
+
+static std::string formatExprToken(const ExprToken &tk) {
+  switch (tk.type) {
+  case ExprToken::Int:
+    return join("|", "Int", tk.i);
+  case ExprToken::Sym:
+    return join("|", "Sym", tk.s);
+  case ExprToken::LPar:
+    return "(";
+  case ExprToken::RPar:
+    return ")";
+  case ExprToken::Func:
+    return join("|", "Func", tk.s);
+  case ExprToken::Err:
+    return "Err";
+  default:
+    UNREACHABLE();
+  }
+}
+
+std::unique_ptr<Expr> Assembler::parseExpr(const std::vector<ExprToken> &tokens) {
+  unsigned i = 0;
+
+#define UNEXPECTED_TOKEN() \
+  THROW(AssemblyError, "unexpected token", curLine + 1, lines[curLine], formatExprToken(tk))
+
+#define CUR() (tokens[i])
+
+#define ADVANCE() (tokens[i++])
+
+#define EAT(type) \
+  do { const ExprToken &tk = ADVANCE(); if (tk.type != type) UNEXPECTED_TOKEN(); } while (false)
+
+  std::function<std::unique_ptr<Expr>()> parse;
+
+  parse = [&tokens, &i]() -> std::unique_ptr<Expr> {
+    const ExprToken &tk = ADVANCE();
+    switch (tk.type) {
+    case ExprToken::Int:
+      return std::move(std::make_unique<Expr>(tk->i));
+    case ExprToken::Sym:
+      return std::move(std::make_unique<Expr>(tk->s));
+    case ExprToken::Func: {
+      auto expr = std::make_unique<Expr>(tk->s, Expr::Func);
+      EAT(ExprToken::LPar);
+      while (true) {
+        if (CUR().type == ExprToken::RPar) {
+          ADVANCE();
+          break;
+        }
+        expr->arguments.emplace_back(std::move(parse()));
+      }
+      return std::move(expr);
+    }
+    default:
+      UNEXPECTED_TOKEN();
+    }
+  };
+
+  std::unique_ptr<Expr> expr = std::move(parse());
+
+  if (i != tokens.size() - 1)
+    THROW(AssemblyError, "residual tokens", curLine + 1, lines[curLine], formatExprToken(tokens[i]));
+
+  return std::move(expr);
+}
+
+ExprVal Assembler::evalExpr(const Expr *expr) {
+}
+
 Symbol *Assembler::getSymbol(const std::string &name) {
   if (symbols.count(name))
     return symbols[name].get();
@@ -59,12 +282,13 @@ Symbol *Assembler::getSymbol(const std::string &name) {
 
 Symbol *Assembler::addSymbol(const std::string &name) {
   if (isDigit(name[0]))
-    INVALID_SYMBOL();
+    INVALID_SYMBOL_NAME(name);
   for (char c : name) {
-    if (isAlpha(c) || isDigit(c) || isOneOf(c, "_."))
-      continue;
-    INVALID_SYMBOL();
+    if (!isSymbolChar(c))
+      INVALID_SYMBOL_NAME(name);
   }
+  if (name == ".")
+    INVALID_SYMBOL_NAME(name);
 
   if (!symbols.count(name))
     symbols[name].reset(new Symbol(name));
@@ -138,10 +362,10 @@ void Assembler::parseLabel(const std::vector<std::string> &tokens) {
   std::string name = substr(tokens[0], 0, -1);
   if (name.size() == 1 && isDigit(name[0])) {
     curSec->labels.push_back(
-        {.name = name, .offset = curSec->offset, .line = curLine});
+        {.c = name[0], .offset = curSec->offset, .line = curLine});
   } else {
     if (getSymbol(name))
-      DUPLICATED_SYMBOL();
+      DUPLICATED_SYMBOL_NAME();
     Symbol *sym = addSymbol(name);
     sym->sec = curSec;
     sym->offset = curSec->offset;
@@ -177,7 +401,7 @@ void Assembler::tokenize(std::vector<std::string> &tokens) {
 
 #define UNEXPECTED_CHAR()                                                      \
   THROW(AssemblyError, "unexpected character", curLine + 1, i + 1, c,          \
-        toHexStr(c))
+        toHexStr(c, true))
 
     char c = s[i];
     switch (state) {
@@ -207,12 +431,12 @@ void Assembler::tokenize(std::vector<std::string> &tokens) {
       } else {
         UNEXPECTED_CHAR();
       }
-      tokens.push_back(s.substr(j, i - j));
+      tokens.push_back(substr(s, j, i));
       break;
     case AfterFirst:
       if (isSpace(c))
         continue;
-      if (isAlpha(c) || isDigit(c) || isOneOf(c, "_.$") || isOperator(c)) {
+      if (isAlpha(c) || isDigit(c) || isOneOf(c, "_.$") || isOperatorChar(c)) {
         state = Operand;
         j = i;
       } else if (c == '"') {
@@ -230,7 +454,7 @@ void Assembler::tokenize(std::vector<std::string> &tokens) {
       }
       break;
     case Operand:
-      if (isAlpha(c) || isDigit(c) || isOneOf(c, "_.$") || isOperator(c) ||
+      if (isAlpha(c) || isDigit(c) || isOneOf(c, "_.$") || isOperatorChar(c) ||
           isSpace(c))
         continue;
       if (c == ',') {
@@ -242,12 +466,12 @@ void Assembler::tokenize(std::vector<std::string> &tokens) {
       } else {
         UNEXPECTED_CHAR();
       }
-      tokens.push_back(s.substr(j, i - j));
+      tokens.push_back(substr(s, j, i));
       break;
     case AfterOperand:
       if (isSpace(c))
         continue;
-      if (isAlpha(c) || isDigit(c) || isOneOf(c, "_.$") || isOperator(c)) {
+      if (isAlpha(c) || isDigit(c) || isOneOf(c, "_.$") || isOperatorChar(c)) {
         state = Operand;
         j = i;
       } else if (c == '"') {
@@ -265,7 +489,7 @@ void Assembler::tokenize(std::vector<std::string> &tokens) {
         state = StrEsc;
       } else if (c == '"') {
         state = AfterStr;
-        tokens.push_back(s.substr(j, i + 1));
+        tokens.push_back(substr(s, j, i + 1));
       } else if (c == '\n') {
         UNEXPECTED_CHAR();
       }
@@ -331,7 +555,7 @@ void Assembler::tokenize(std::vector<std::string> &tokens) {
       }
     case Char1:
       if (c == '\'') {
-        tokens.push_back(s.substr(j, i + 1));
+        tokens.push_back(substr(s, j, i + 1));
         state = AfterStr;
       } else {
         UNEXPECTED_CHAR();

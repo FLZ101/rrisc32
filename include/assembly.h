@@ -16,7 +16,7 @@ namespace assembly {
 DEFINE_EXCEPTION(AssemblyError)
 
 struct Label {
-  std::string name;
+  char c;
   s64 offset;
   unsigned line;
 };
@@ -37,27 +37,14 @@ struct Section {
   Section(const Section &) = delete;
   Section &operator=(const Section &) = delete;
 
-  Label *findLabelB(const std::string &name, unsigned line) {
-    auto r = std::ranges::find_last_if(
-        labels.begin(), labels.end(), [&name, line](const Label &label) {
-          return label.name == name && label.line < line;
-        });
-    return r.empty() ? nullptr : &*r.begin();
-  }
-
-  Label *findLabelF(const std::string &name, unsigned line) {
-    auto r = std::ranges::find_last_if(
-        labels.rbegin(), labels.rend(), [&name, line](const Label &label) {
-          return label.name == name && label.line > line;
-        });
-    return r.empty() ? nullptr : &*r.begin();
-  }
+  const Label *findLabelB(char c, unsigned line);
+  const Label *findLabelF(char c, unsigned line);
 
   std::string name;
   s64 offset = 0;
   u8 align = 3;
 
-  std::list<Label> labels;
+  std::vector<Label> labels;
   std::list<Instr> instrs;
   std::list<Directive> directives;
 };
@@ -88,35 +75,25 @@ struct ExprVal {
 };
 
 struct Expr {
-  Expr() {}
+  enum Type { Int, Sym, Func};
+
+  Expr(s64 i) : i(i), type(Int) {}
+  Expr(const std::string &s, Type type = Sym) : s(s), type(type) {}
+
+  Type type;
 
   s64 i;
-
-  std::string sym;
-
-  std::string func;
+  std::string s;
   std::vector<std::unique_ptr<Expr>> arguments;
 };
 
 struct ExprToken {
-  enum Type { Int, Sym, LPar, RPar, Func };
+  enum Type { Int, Sym, LPar, RPar, Func, Err };
 
+  Type type;
   s64 i;
   std::string s;
 };
-
-class ExprLexer {
-public:
-  ExprLexer(const std::string &s) : s(s) {}
-
-  bool hasNext();
-  void next();
-
-private:
-  std::string s;
-};
-
-// ExprParser
 
 class Assembler {
 public:
@@ -146,7 +123,9 @@ private:
 
   bool isSpace(char c) { return isOneOf(c, "\t "); }
 
-  bool isOperator(char c) { return isOneOf(c, "+-*/%()<>|&^~"); }
+  bool isOperatorChar(char c) { return isOneOf(c, "+-*/%()<>|&^~"); }
+
+  bool isSymbolChar(char c) { return isAlpha(c) || isDigit(c) || isOneOf(c, "_."); }
 
   void tokenize(std::vector<std::string> &tokens);
 
@@ -154,10 +133,20 @@ private:
   void parseLabel(const std::vector<std::string> &tokens);
   void parseInstr(const std::vector<std::string> &tokens);
 
+  void tokenizeExpr(std::string s, std::vector<ExprToken> &tokens);
+  std::unique_ptr<Expr> parseExpr(const std::vector<ExprToken> &tokens);
+  std::unique_ptr<Expr> parseExpr(const std::string &s);
+  ExprVal evalExpr(const Expr *expr);
+
+  s64 parseInt(std::string s);
+  s64 parseInt(char c, bool hex = false);
+
   Section *getSection(const std::string &name);
 
   Symbol *getSymbol(const std::string &name);
   Symbol *addSymbol(const std::string &name);
+
+  bool isLocalSymbolName(const std::string &name) { return name.starts_with(".L"); }
 
   std::vector<std::string> lines;
   unsigned curLine = 0;
@@ -177,18 +166,3 @@ private:
 } // namespace assembly
 
 #endif
-
-/*
-register x0
-imm .
-
-expression
-+ - * / %
-| & ^ ~
-*/
-
-/*
-1:
-        auipc	a0, %pcrel_hi(msg + 1)
-        addi	a0, a0, %pcrel_lo(1b)
-*/
