@@ -1,0 +1,764 @@
+diff --git a/include/assembly.h b/include/assembly.h
+index cfe4c26..d40413e 100644
+--- a/include/assembly.h
++++ b/include/assembly.h
+@@ -4,6 +4,7 @@
+ #include <list>
+ #include <map>
+ #include <memory>
++#include <ostream>
+ #include <string>
+ #include <vector>
+ 
+@@ -75,42 +76,161 @@ struct ExprVal {
+ };
+ 
+ struct Expr {
+-  enum Type { Int, Sym, Func};
++  enum Type { Reg, Str, Int, Sym, Func };
+ 
+   Expr(s64 i) : i(i), type(Int) {}
+-  Expr(const std::string &s, Type type = Sym) : s(s), type(type) {}
++  Expr(const std::string &s, Type type = Str) : s(s), type(type) {}
+ 
+   Type type;
+ 
+   s64 i;
++  std::string s;
++  std::vector<std::unique_ptr<Expr>> operands;
++};
++
++struct Statement {
++  enum Type { Directive, Instr, Label };
++
++  Type type;
++
+   std::string s;
+   std::vector<std::unique_ptr<Expr>> arguments;
+ };
+ 
+-struct ExprToken {
+-  enum Type { Int, Sym, LPar, RPar, Func, Err };
++struct Token {
++  enum Type {
++    Directive,
++    Instr,
++    Label,
++    Int,
++    Str,
++    Reg,
++    Sym,
++    Func,
++    LPar,
++    RPar,
++    Comma,
++    Err
++  };
+ 
+   Type type;
++
+   s64 i;
+   std::string s;
+ };
+ 
+-class Assembler {
+-public:
+-  explicit Assembler(std::string filename)
+-      : filename(filename), writer(filename + ".o", elf::ET_REL) {}
++std::ostream &operator<<(std::ostream &os, Token::Type type) {
++  switch (type) {
++  case Token::Directive:
++    os << "Directive";
++    break;
++  case Token::Instr:
++    os << "Instr";
++    break;
++  case Token::Label:
++    os << "Label";
++    break;
++  case Token::Reg:
++    os << "Reg";
++    break;
++  case Token::Int:
++    os << "Int";
++    break;
++  case Token::Str:
++    os << "Str";
++    break;
++  case Token::Sym:
++    os << "Sym";
++    break;
++  case Token::LPar:
++    os << "(";
++    break;
++  case Token::RPar:
++    os << ")";
++    break;
++  case Token::Func:
++    os << "Func";
++    break;
++  case Token::Comma:
++    os << ",";
++    break;
++  case Token::Err:
++    os << "Err";
++    break;
++  default:
++    UNREACHABLE();
++  }
++}
++
++std::ostream &operator<<(std::ostream &os, const Token &tk) {
++  switch (tk.type) {
++  case Token::Int:
++    os << join("|", toString(tk.type), toHexStr(tk.i));
++    break;
++  case Token::Directive:
++  case Token::Instr:
++  case Token::Label:
++  case Token::Reg:
++  case Token::Str:
++  case Token::Sym:
++  case Token::Func:
++    os << join("|", toString(tk.type), tk.s);
++    break;
++  case Token::LPar:
++  case Token::RPar:
++  case Token::Comma:
++  case Token::Err:
++    os << toString(tk.type);
++    break;
++  default:
++    UNREACHABLE();
++  }
++  return os;
++}
+ 
+-  Assembler(const Assembler &) = delete;
+-  Assembler &operator=(const Assembler &) = delete;
++class Parser {
++public:
++  Parser(const std::vector<Token> &tokens) : tokens(tokens), i(0) {}
+ 
+-  void run();
++  std::unique_ptr<Statement> parse();
+ 
+ private:
+-  bool isDigit(char c) { return '0' <= c && c <= '9'; }
++  std::vector<std::unique_ptr<Expr>> parseArguments();
++
++  const Token &expect(std::vector<Token::Type> types);
++  const Token &expect(Token::Type type) { return expect({type}); }
++
++  const std::vector<Token> &tokens;
++  unsigned i;
++};
++
++class Lexer {
++public:
++  Lexer(const std::string &s) : s(s + "\n\n"), i(0) {}
+ 
+-  bool isAlpha(char c) {
+-    return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z');
++  void tokenize();
++
++  const std::vector<Token> &getTokens() { return tokens; }
++
++private:
++  bool startsWith(const std::string &str) {
++    if (s.size() - i < str.size())
++      return false;
++    for (unsigned j = 0; j < str.size(); ++j)
++      if (s[i + j] != str[j])
++        return false;
++    return true;
+   }
++  bool eat(const std::string &str) {
++    if (startsWith(str)) {
++      i += str.size();
++      return true;
++    }
++    return false;
++  }
++  bool isDec(char c) { return '0' <= c && c <= '9'; }
++  bool isHex(char c) { return isDec(c) || ('a' <= c && c <= 'f'); }
++  bool isReg(char c) { return isDec(c) || ('a' <= c && c <= 'z'); }
+ 
+   bool isOneOf(char c, const char *s) {
+     while (*s) {
+@@ -123,12 +243,50 @@ private:
+ 
+   bool isSpace(char c) { return isOneOf(c, "\t "); }
+ 
+-  bool isOperatorChar(char c) { return isOneOf(c, "+-*/%()<>|&^~"); }
++  bool isLower(char c) { return 'a' <= c && c <= 'z'; }
++  bool isUpper(char c) { return 'A' <= c && c <= 'Z'; }
++  bool isAlpha(char c) { return isLower(c) || isUpper(c); }
++
++  bool isDirective(char c) { return isInstr(c); }
++  bool isInstr(char c) { return isLower(c) || c == '.'; }
++  bool isLabel(char c) { return isAlpha(c) || isDec(c) || isOneOf(c, "_."); }
++  bool isStatement(char c) {
++    return isDirective(c) || isInstr(c) || isLabel(c) || c == ':';
++  }
++
++  bool isOperator(char c) { return isOneOf(c, "+-*/%<>|&^~"); }
++  bool isFunc(char c) { return isOperator(c) || isLower(c) || c == '_'; }
++
++  bool isSym(char c) { return isLabel(c); }
+ 
+-  bool isSymbolChar(char c) { return isAlpha(c) || isDigit(c) || isOneOf(c, "_."); }
++  void cookToken(Token &tk);
++  void cookStatement(Token &tk);
++  void cookStr(Token &tk);
++  void cookInt(Token &tk);
+ 
+-  void tokenize(std::vector<std::string> &tokens);
++  bool checkDirective(const std::string &str);
++  bool checkInstr(const std::string &str);
++  bool checkLabel(const std::string &str);
+ 
++  s64 parseInt(const std::string &str, bool hex = false);
++
++  std::string s;
++  unsigned i;
++
++  std::vector<Token> tokens;
++};
++
++class Assembler {
++public:
++  explicit Assembler(std::string filename)
++      : filename(filename), writer(filename + ".o", elf::ET_REL) {}
++
++  Assembler(const Assembler &) = delete;
++  Assembler &operator=(const Assembler &) = delete;
++
++  void run();
++
++private:
+   void parseDirective(const std::vector<std::string> &tokens);
+   void parseLabel(const std::vector<std::string> &tokens);
+   void parseInstr(const std::vector<std::string> &tokens);
+@@ -138,15 +296,14 @@ private:
+   std::unique_ptr<Expr> parseExpr(const std::string &s);
+   ExprVal evalExpr(const Expr *expr);
+ 
+-  s64 parseInt(std::string s);
+-  s64 parseInt(char c, bool hex = false);
+-
+   Section *getSection(const std::string &name);
+ 
+   Symbol *getSymbol(const std::string &name);
+   Symbol *addSymbol(const std::string &name);
+ 
+-  bool isLocalSymbolName(const std::string &name) { return name.starts_with(".L"); }
++  bool isLocalSymbolName(const std::string &name) {
++    return name.starts_with(".L");
++  }
+ 
+   std::vector<std::string> lines;
+   unsigned curLine = 0;
+diff --git a/include/util.h b/include/util.h
+index ff02d9d..cb8d173 100644
+--- a/include/util.h
++++ b/include/util.h
+@@ -35,6 +35,26 @@ std::string join(std::string sep, T x, Args... args) {
+   return os.str();
+ }
+ 
++template <typename T>
++std::string joinArr(std::string sep, T arr) {
++  std::ostringstream os;
++  bool first = true;
++  for (auto &x in arr) {
++    if (first)
++      first = false;
++    else
++      os << sep;
++    os << x;
++  }
++  return os.str();
++}
++
++template <typename T> std::string toString(T x) {
++  std::ostringstream os;
++  os << x;
++  return os.str();
++}
++
+ template <typename T>
+ std::string toHexStr(T x, bool ox = false, bool smart = true) {
+   std::ostringstream os;
+@@ -89,7 +109,13 @@ private:
+     NAME(const std::string &msg) : Exception(msg) {}                           \
+   };
+ 
++#ifndef _DEBUG
+ #ifndef NDEBUG
++#define _DEBUG 1
++#endif
++#endif
++
++#if _DEBUG
+ #define THROW(NAME, ...)                                                       \
+   do {                                                                         \
+     throw NAME(join(" : ", #NAME, __FILE__ + (":" + std::to_string(__LINE__)), \
+@@ -113,6 +139,6 @@ private:
+ 
+ DEFINE_EXCEPTION(Unreachable)
+ 
+-#define UNREACHABLE(...) THROW(NAME, __VA_ARGS__)
++#define UNREACHABLE(...) THROW(Unreachable, __VA_ARGS__)
+ 
+ #endif
+diff --git a/lib/assembly.cpp b/lib/assembly.cpp
+index a5c7cd7..04dfc2b 100644
+--- a/lib/assembly.cpp
++++ b/lib/assembly.cpp
+@@ -6,33 +6,10 @@
+ 
+ namespace assembly {
+ 
+-#define INVALID_SYMBOL_NAME(name)                                                       \
+-  THROW(AssemblyError, "invalid symbol", curLine + 1, name)
+-
+-#define DUPLICATED_SYMBOL_NAME()                                                    \
+-  THROW(AssemblyError, "duplicated symbol", curLine + 1, lines[curLine])
+-
+-#define UNKNOWN_SECTION_NAME()                                                 \
+-  THROW(AssemblyError, "unknown section name", curLine + 1, lines[curLine])
+-
+-#define UNKNOWN_SECTION_TYPE()                                                 \
+-  THROW(AssemblyError, "unknown section type", curLine + 1, lines[curLine])
+-
+-#define CHECK_CURRENT_SECTION()                                                \
+-  do {                                                                         \
+-    if (!curSec)                                                               \
+-      THROW(AssemblyError, "no current section", curLine + 1, lines[curLine]); \
+-  } while (false)
+-
+-#define INVALID_DIRECTIVE()                                                    \
+-  THROW(AssemblyError, "invalid directive", curLine + 1, lines[curLine])
+-
+-#define UNKNOWN_DIRECTIVE()                                                    \
+-  THROW(AssemblyError, "unknown directive", curLine + 1, lines[curLine])
+-
+ const Label *Section::findLabelB(char c, unsigned line) {
+-  auto it = std::lower_bound(labels.begin(), labels.end(),
+-    [](const Label &a, const Label &b) { return a.line < b.line; });
++  auto it = std::lower_bound(
++      labels.begin(), labels.end(),
++      [](const Label &a, const Label &b) { return a.line < b.line; });
+   while (--it >= labels.begin())
+     if (it->c == c)
+       return &*it;
+@@ -40,202 +17,411 @@ const Label *Section::findLabelB(char c, unsigned line) {
+ }
+ 
+ const Label *Section::findLabelF(char c, unsigned line) {
+-  auto it = std::lower_bound(labels.begin(), labels.end(),
+-    [](const Label &a, const Label &b) { return a.line <= b.line; });
++  auto it = std::lower_bound(
++      labels.begin(), labels.end(),
++      [](const Label &a, const Label &b) { return a.line <= b.line; });
+   while (it < labels.end())
+     if (it->c == c)
+       return &*it;
+   return nullptr;
+ }
+ 
+-void Assembler::run() {
+-  {
+-    std::fstream ifs(filename, std::ios::in | std::ios::binary);
+-    if (!ifs)
+-      THROW(AssemblyError, "read", filename);
+-    for (std::string line; std::getline(ifs, line);)
+-      lines.push_back(line);
+-  }
++std::unique_ptr<Statement> Parser::parse() {
++  if (tokens.empty())
++    return nullptr;
++  const Token &tk =
++      expect({Token::Directive, Token::Instr, Token::Label});
+ 
+-  for (curLine = 0; curLine < lines.size(); ++curLine) {
+-    std::vector<std::string> tokens;
+-    tokenize(tokens);
+-    if (tokens.empty())
+-      continue;
+-    if (tokens[0].front() == '.')
+-      parseDirective(tokens);
+-    else if (tokens[0].back() == ':')
+-      parseLabel(tokens);
+-    else
+-      parseInstr(tokens);
++  std::unique_ptr<Statement> res = std::make_unique<Statement>();
++
++  switch (tk.type) {
++  case Token::Directive:
++    res->type = Statement::Directive;
++    break;
++  case Token::Instr:
++    res->type = Statement::Instr;
++    break;
++  case Token::Label:
++    res->type = Statement::Label;
++    break;
++  default:
++    UNREACHABLE();
+   }
+-}
+ 
+-s64 Assembler::parseInt(char c, bool hex) {
+-  if (isDigit(c))
+-    return c - '0';
+-  if (hex && isOneOf(c, "abcdef"))
+-    return c - 'a';
+-  UNREACHABLE();
++  res->s = tk.s;
++  res->arguments = std::move(parseArguments());
++  return std::move(res);
+ }
+ 
+-s64 Assembler::parseInt(std::string s) {
+-  bool hex = false;
+-  if (s.starts_with("0x")) {
+-    s = substr(s, 2);
+-    hex = true;
+-  }
+-  s64 res = 0;
+-  for (char c : s) {
+-    res *= hex ? 16 : 10;
+-    res += parseInt(c, hex);
+-  }
+-  return res;
++const Token &Parser::expect(std::vector<Token::Type> types) {
++  for (auto type : types)
++    if (tokens[i].type == type)
++      return tokens[i++];
++  THROW(AssemblyError, joinArr("|", types) + " expected", toString(tokens[i]));
+ }
+ 
+-void Assembler::tokenizeExpr(std::string s, std::vector<ExprToken> &tokens) {
+-  s += "\n\n";
++void Lexer::tokenize() {
+ 
+   enum {
+     Begin,
+-    Int,
++    Statement,
++    Expr,
++    Dec,
+     Hex,
++    Str,
++    StrEsc,
++    StrEscX,
++    StrEscXX,
++    Reg,
+     Sym,
+     Func,
++    Comment,
+     End
+   };
+   auto state = Begin;
++
+   unsigned j = 0;
+-  for (unsigned i = 0; i < s.size(); ++i) {
++  for (; i < s.size(); ++i) {
+     char c = s[i];
+ 
+-#define UNEXPECTED_CHAR() \
+-  THROW(AssemblyError, "unexpected character", curLine + 1, s, i, c, toHexStr(c, true))
++#define UNEXPECTED_CHAR()                                                      \
++  THROW(AssemblyError, "unexpected character", s, i, toHexStr(c, true), c)
++
++#define SKIP_SPACE()                                                           \
++  do {                                                                         \
++    if (isSpace(c))                                                            \
++      continue;                                                                \
++  } while (false)
++
++#define TRY_COMMENT()                                                          \
++  do {                                                                         \
++    if (c == '#') {                                                            \
++      state = Comment;                                                         \
++      continue;                                                                \
++    }                                                                          \
++  } while (false)
++
++#define TRY_END()                                                              \
++  do {                                                                         \
++    if (c == '\n') {                                                           \
++      state = End;                                                             \
++      continue;                                                                \
++    }                                                                          \
++  } while (false)
+ 
+-#define INVALID_SYM_TOKEN(tk) \
+-  THROW(AssemblyError, "invalid Sym token", curLine + 1, tk)
++#define ADD_TOKEN(T) tokens.push_back({.type = T, .s = substr(s, i, j)})
+ 
+-#define INVALID_INT_TOKEN(tk) \
+-  THROW(AssemblyError, "invalid Int token", curLine + 1, tk)
++#define ADD_TOKEN_T(T) tokens.push_back({.type = T})
+ 
+     switch (state) {
+     case Begin:
+-      if (isSpace(c))
++      SKIP_SPACE();
++      if (isStatement(c)) {
++        j = i;
++        state = Statement;
+         continue;
+-      if (isDigit(c)) {
++      }
++      TRY_COMMENT();
++      TRY_END();
++      UNEXPECTED_CHAR();
++      break;
++    case Comment:
++      TRY_END();
++      break;
++    case End:
++      ADD_TOKEN(Token::Err);
++      for (Token &tk : tokens)
++        cookToken(tk);
++      return;
++    case Statement:
++      if (isStatement(c))
++        continue;
++      ADD_TOKEN(Token::Directive);
++      --i;
++      state = Expr;
++      break;
++    case Expr:
++      SKIP_SPACE();
++      if (isDec(c)) {
+         j = i;
+-        if (c == '0' && i + 1 < s.size() && s[i+1] == 'x') {
++        if (c == '0' && eat("x"))
+           state = Hex;
+-          ++i;
+-        } else {
+-          state = Int;
+-        }
+-      } else if (c == '$') {
++        else
++          state = Dec;
++        continue;
++      }
++      if (c == '"') {
++        j = i;
++        state = Str;
++        continue;
++      }
++      if (isReg(c)) {
++        j = i;
++        state = Reg;
++        continue;
++      }
++      if (c == '$') {
+         j = i;
+         state = Sym;
+-      } else if (isAlpha(c) || isOperatorChar(c) || c == '_') {
++        continue;
++      }
++      if (isOperator(c)) {
+         j = i;
+         state = Func;
+-      } else if (c == '\n') {
+-        state = End;
+-      } else if (c == '(') {
+-        toke.push_back({.type = ExprToken::LPar});
+-      } else if (c == ')') {
+-        toke.push_back({.type = ExprToken::RPar});
+-      } else {
+-        UNEXPECTED_CHAR();
++        continue;
++      }
++      if (c == '(') {
++        ADD_TOKEN_T(Token::LPar);
++        continue;
+       }
++      if (c == ')') {
++        ADD_TOKEN_T(Token::RPar);
++        continue;
++      }
++      if (c == ',') {
++        ADD_TOKEN_T(Token::Comma);
++        continue;
++      }
++      TRY_COMMENT();
++      TRY_END();
++      UNEXPECTED_CHAR();
+       break;
+-    case Int:
+-    case Hex:
+-      if (isDigit(c))
++    case Str:
++      if (c == '\\') {
++        state = StrEsc;
++        if (eat("x"))
++          state = StrEscX;
+         continue;
+-      if (state == Hex && isOneOf("abcdef"))
++      }
++      if (c == '"') {
++        state = Expr;
++        ++j;
++        ADD_TOKEN(Token::Str);
+         continue;
+-      if (isSpace(c) || isOneOf(c, "()\n")) {
+-        std::string tk = substr(s, j, i);
+-        if (tk == "0x")
+-          INVALID_INT_TOKEN(tk);
+-        tokens.push_back({.type = ExprToken::Int, .i = parseInt(tk)});
+-        --i;
+-        state = Begin;
+-      } else {
++      }
++      if (c == '\n')
++        UNEXPECTED_CHAR();
++      break;
++    case StrEsc:
++      switch (c) {
++      case 'n':
++      case 't':
++      case '0':
++      case '"':
++        state = Str;
++        break;
++      default:
+         UNEXPECTED_CHAR();
+       }
+       break;
++    case StrEscX:
++      if (isHex(c))
++        state = StrEscXX;
++      else
++        UNEXPECTED_CHAR();
++      break;
++    case StrEscXX:
++      if (isHex(c))
++        state = Str;
++      else
++        UNEXPECTED_CHAR();
++      break;
++    case Dec:
++      if (isDec(c))
++        continue;
++      ADD_TOKEN(Token::Int);
++      --i;
++      state = Expr;
++      break;
++    case Hex:
++      if (isHex(c))
++        continue;
++      ADD_TOKEN(Token::Int);
++      --i;
++      state = Expr;
++      break;
++    case Reg:
++      if (isReg(c))
++        continue;
++      ADD_TOKEN(Token::Reg);
++      --i;
++      state = Expr;
++      break;
+     case Sym:
+-      if (isSymbolChar(c))
++      if (isSym(c))
+         continue;
+-      if (isSpace(c) || isOneOf(c, "()\n")) {
+-        std::string tk = substr(s, j, i);
+-        if (tk.size() < 2)
+-          INVALID_SYM_TOKEN(tk);
+-        if (isDigit(tk[1])) {
+-          if (tk.size() != 3 || !isOneOf(tk[2], "bf"))
+-            INVALID_SYM_TOKEN(tk);
+-        }
+-        tokens.push_back({.type = ExprToken::Sym, .s = substr(tk, 1)});
+-        --i;
+-        state = Begin;
+-      } else {
+-        UNEXPECTED_CHAR();
+-      }
++      ADD_TOKEN(Token::Sym);
++      --i;
++      state = Expr;
+       break;
+     case Func:
+-      if (isAlpha(c) || isOperatorChar(c) || c == '_' || isDigit(c))
++      if (isFunc(c))
+         continue;
+-      if (isSpace(c) || isOneOf(c, "()\n")) {
+-        tokens.push_back({.type = ExprToken::Func, .s =substr(s, j, i)});
+-        --i;
+-        state = Begin;
+-      } else {
+-        UNEXPECTED_CHAR();
+-      }
++      ADD_TOKEN(Token::Func);
++      --i;
++      state = Expr;
+       break;
+-    case End:
+-      tokens.push_back({.type = ExprToken::Err);
+-      return;
++    default:
++      UNREACHABLE();
+     }
++#undef ADD_TOKEN_T
++#undef ADD_TOKEN
++#undef TRY_END
++#undef TRY_COMMENT
++#undef SKIP_SPACE
++#undef UNEXPECTED_CHAR
+   }
+-}
+ 
+-std::unique_ptr<Expr> Assembler::parseExpr(const std::string &s) {
+-  std::vector<ExprToken> tokens;
+-  tokenizeExpr(s, tokens);
+-  return parseExpr(tokens);
++  UNREACHABLE();
+ }
+ 
+-static std::string formatExprToken(const ExprToken &tk) {
++void Lexer::cookToken(Token &tk) {
+   switch (tk.type) {
+-  case ExprToken::Int:
+-    return join("|", "Int", tk.i);
+-  case ExprToken::Sym:
+-    return join("|", "Sym", tk.s);
+-  case ExprToken::LPar:
+-    return "(";
+-  case ExprToken::RPar:
+-    return ")";
+-  case ExprToken::Func:
+-    return join("|", "Func", tk.s);
+-  case ExprToken::Err:
+-    return "Err";
++  case Token::Directive:
++    cookStatement(tk);
++    break;
++  case Token::Str:
++    cookStr(tk);
++    break;
++  case Token::Int:
++    cookInt(tk);
++    break;
++  case Token::Sym:
++    tk.s = substr(tk.s, 1);
++    if (tk.s.size() < 1 || isDec(tk.s[0]))
++      THROW(AssemblyError, "invalid Sym", tk.s);
++    break;
++  case Token::Func:
++    if (tk.s.size() > 1 && tk.s[0] == '%' && !isOperator(tk.s[1]))
++      tk.s = substr(tk.s, 1);
++    break;
+   default:
+-    UNREACHABLE();
+   }
+ }
