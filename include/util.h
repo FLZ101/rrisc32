@@ -35,6 +35,25 @@ std::string join(std::string sep, T x, Args... args) {
   return os.str();
 }
 
+template <typename T> std::string joinArr(std::string sep, T arr) {
+  std::ostringstream os;
+  bool first = true;
+  for (auto &x : arr) {
+    if (first)
+      first = false;
+    else
+      os << sep;
+    os << x;
+  }
+  return os.str();
+}
+
+template <typename T> std::string toString(T x) {
+  std::ostringstream os;
+  os << x;
+  return os.str();
+}
+
 template <typename T>
 std::string toHexStr(T x, bool ox = false, bool smart = true) {
   std::ostringstream os;
@@ -89,7 +108,17 @@ private:
     NAME(const std::string &msg) : Exception(msg) {}                           \
   };
 
+#ifndef _DEBUG
 #ifndef NDEBUG
+#define _DEBUG 1
+#endif
+#endif
+
+// https://gcc.gnu.org/onlinedocs/gcc/Variadic-Macros.html
+//
+// if the variable arguments are omitted or empty, the ‘##’ operator
+// causes the preprocessor to remove the comma before it
+#if _DEBUG
 #define THROW(NAME, ...)                                                       \
   do {                                                                         \
     throw NAME(join(" : ", #NAME, __FILE__ + (":" + std::to_string(__LINE__)), \
@@ -113,6 +142,10 @@ private:
 
 DEFINE_EXCEPTION(Unreachable)
 
-#define UNREACHABLE(...) THROW(NAME, __VA_ARGS__)
+#define UNREACHABLE(...)                                                       \
+  do {                                                                         \
+    THROW(Unreachable, ##__VA_ARGS__);                                         \
+    __builtin_unreachable();                                                   \
+  } while (false)
 
 #endif

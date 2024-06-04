@@ -12,9 +12,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(FetchContent)
 
 FetchContent_Declare(
-  elfio
-  GIT_REPOSITORY https://github.com/serge1/ELFIO.git
-  GIT_TAG        8ae6cec5d60495822ecd57d736f66149da9b1830 # Release_3.12
+    elfio
+    GIT_REPOSITORY https://github.com/serge1/ELFIO.git
+    GIT_TAG        8ae6cec5d60495822ecd57d736f66149da9b1830 # Release_3.12
 )
 
 FetchContent_MakeAvailable(elfio)
@@ -23,3 +23,4 @@ include_directories(include)
 
 add_subdirectory(lib)
 add_subdirectory(tools)
+add_subdirectory(test EXCLUDE_FROM_ALL)
