@@ -1,0 +1,432 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0d161bc..43a057d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,16 +9,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
+ 
+ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+ 
+-include(FetchContent)
+-
+-FetchContent_Declare(
+-    elfio
+-    GIT_REPOSITORY https://github.com/serge1/ELFIO.git
+-    GIT_TAG        8ae6cec5d60495822ecd57d736f66149da9b1830 # Release_3.12
+-)
+-
+-FetchContent_MakeAvailable(elfio)
+-
+ include_directories(include)
+ 
+ add_subdirectory(lib)
+diff --git a/build.sh b/build.sh
+index 6957300..28baa2e 100644
+--- a/build.sh
++++ b/build.sh
+@@ -2,7 +2,9 @@
+ 
+ set -e
+ 
+-cmake -DCMAKE_BUILD_TYPE=Debug -B build -S .
++G=Ninja
++G="Unix Makefiles"
++cmake -DCMAKE_BUILD_TYPE=Debug -G"$G" -B build -S .
+ cmake --build build
+ 
+ # ./build/tools/dump/dump
+diff --git a/include/assembly.h b/include/assembly.h
+index 32222b9..097739b 100644
+--- a/include/assembly.h
++++ b/include/assembly.h
+@@ -16,65 +16,6 @@ namespace assembly {
+ 
+ DEFINE_EXCEPTION(AssemblyError)
+ 
+-struct Label {
+-  char c;
+-  s64 offset;
+-  unsigned line;
+-};
+-
+-struct Instr {
+-  std::vector<std::string> tokens;
+-  unsigned line;
+-};
+-
+-struct Directive {
+-  std::vector<std::string> tokens;
+-  unsigned line;
+-};
+-
+-struct Section {
+-  Section(std::string name) : name(name) {}
+-
+-  Section(const Section &) = delete;
+-  Section &operator=(const Section &) = delete;
+-
+-  const Label *findLabelB(char c, unsigned line);
+-  const Label *findLabelF(char c, unsigned line);
+-
+-  std::string name;
+-  s64 offset = 0;
+-  u8 align = 3;
+-
+-  std::vector<Label> labels;
+-  std::list<Instr> instrs;
+-  std::list<Directive> directives;
+-};
+-
+-struct Symbol {
+-  Symbol() {}
+-  Symbol(const std::string &name) { sym.name = name; }
+-
+-  elf::Symbol sym = {.name = "",
+-                     .value = 0,
+-                     .size = 0,
+-                     .type = elf::STT_NOTYPE,
+-                     .bind = elf::STB_LOCAL,
+-                     .other = elf::STV_DEFAULT,
+-                     .sec = elf::SHN_UNDEF};
+-
+-  Section *sec = nullptr;
+-  s64 offset = 0;
+-};
+-
+-struct ExprVal {
+-  explicit ExprVal(s64 i) : i(i) {}
+-  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset) {}
+-
+-  s64 i = 0;
+-  Section *sec = nullptr;
+-  s64 offset = 0;
+-};
+-
+ struct Expr {
+   enum Type { Reg, Str, Int, Sym, Func };
+ 
+@@ -132,7 +73,7 @@ public:
+ private:
+   std::vector<std::unique_ptr<Expr>> parseArguments();
+   std::unique_ptr<Expr> parseFunc();
+-  
++
+   const Token *eat(const std::initializer_list<Token::Type> &types);
+   const Token *eat(Token::Type type);
+   const Token *expect(const std::initializer_list<Token::Type> &types);
+@@ -214,6 +155,49 @@ private:
+   std::vector<Token> tokens;
+ };
+ 
++struct Section {
++  explicit Section(const std::string &name) : name(name) {}
++
++  Section(const Section &) = delete;
++  Section &operator=(const Section &) = delete;
++
++  // const Label *findLabelB(char c, unsigned line);
++  // const Label *findLabelF(char c, unsigned line);
++
++  std::string name;
++  s64 offset = 0;
++  u8 align = 3;
++
++  // std::vector<Label> labels;
++  // std::list<Instr> instrs;
++  // std::list<Directive> directives;
++};
++
++struct Symbol {
++  Symbol() {}
++  Symbol(const std::string &name) { sym.name = name; }
++
++  elf::Symbol sym = {.name = "",
++                     .value = 0,
++                     .size = 0,
++                     .type = elf::STT_NOTYPE,
++                     .bind = elf::STB_LOCAL,
++                     .other = elf::STV_DEFAULT,
++                     .sec = elf::SHN_UNDEF};
++
++  Section *sec = nullptr;
++  s64 offset = 0;
++};
++
++struct ExprVal {
++  explicit ExprVal(s64 i) : i(i) {}
++  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset) {}
++
++  s64 i = 0;
++  Section *sec = nullptr;
++  s64 offset = 0;
++};
++
+ class Assembler {
+ public:
+   explicit Assembler(std::string filename)
+@@ -225,10 +209,6 @@ public:
+   void run();
+ 
+ private:
+-  void parseDirective(const std::vector<std::string> &tokens);
+-  void parseLabel(const std::vector<std::string> &tokens);
+-  void parseInstr(const std::vector<std::string> &tokens);
+-
+   ExprVal evalExpr(const Expr *expr);
+ 
+   Section *getSection(const std::string &name);
+@@ -243,14 +223,16 @@ private:
+   std::vector<std::string> lines;
+   unsigned curLine = 0;
+ 
+-  Section sections[4] = {Section(".text"), Section(".rodata"), Section(".data"),
+-                         Section(".bss")};
++  Section secText{".text"};
++  Section secRodata{".rodata"};
++  Section secData{".data"};
++  Section secBss{".bss"};
++
++  Section *sections[4] = {&secText, &secRodata, &secData, &secBss};
+   Section *curSec = nullptr;
+ 
+   std::map<std::string, std::unique_ptr<Symbol>> symbols;
+ 
+-  std::list<Directive> directives;
+-
+   std::string filename;
+   elf::RRisc32Writer writer;
+ };
+diff --git a/include/util.h b/include/util.h
+index 7e958fb..c83f752 100644
+--- a/include/util.h
++++ b/include/util.h
+@@ -4,9 +4,12 @@
+ #include <cassert>
+ #include <initializer_list>
+ #include <iomanip>
++#include <ostream>
+ #include <sstream>
+ #include <string>
+ 
++#include "CLI/CLI.hpp"
++
+ typedef unsigned long u64;
+ typedef unsigned int u32;
+ typedef unsigned short u16;
+@@ -108,17 +111,11 @@ private:
+     NAME(const std::string &msg) : Exception(msg) {}                           \
+   };
+ 
+-#ifndef _DEBUG
+-#ifndef NDEBUG
+-#define _DEBUG 1
+-#endif
+-#endif
+-
+ // https://gcc.gnu.org/onlinedocs/gcc/Variadic-Macros.html
+ //
+ // if the variable arguments are omitted or empty, the ‘##’ operator
+ // causes the preprocessor to remove the comma before it
+-#if _DEBUG
++#ifndef NDEBUG
+ #define THROW(NAME, ...)                                                       \
+   do {                                                                         \
+     throw NAME(join(" : ", #NAME, __FILE__ + (":" + std::to_string(__LINE__)), \
+@@ -131,21 +128,48 @@ private:
+   } while (false)
+ #endif
+ 
+-#define CATCH(X)                                                               \
++DEFINE_EXCEPTION(Unreachable)
++
++#define UNREACHABLE(...)                                                       \
++  do {                                                                         \
++    THROW(Unreachable, ##__VA_ARGS__);                                         \
++    __builtin_unreachable();                                                   \
++  } while (false)
++
++#ifndef NDEBUG
++extern std::string debugType;
++
++void setDebugType(const char *);
++
++bool chkDebugType(const char *);
++
++#define DEBUG_WITH_TYPE(TYPE, X)                                               \
+   do {                                                                         \
+-    try {                                                                      \
++    if (chkDebugType(TYPE)) {                                                  \
+       X;                                                                       \
+-    } catch (Exception & ex) {                                                 \
+-      std::cerr << "!!! " << ex.what() << "\n";                                \
+     }                                                                          \
+   } while (false)
+ 
+-DEFINE_EXCEPTION(Unreachable)
++#define ADD_DEBUG_OPT(app)                                                     \
++  do {                                                                         \
++    (app).add_option("--debug", debugType);                                    \
++  } while (false)
++#else
++#define setDebugType(X)                                                        \
++  do {                                                                         \
++    (void)(X);                                                                 \
++  } while (false)
+ 
+-#define UNREACHABLE(...)                                                       \
++#define chkDebugType(X) (false)
++
++#define DEBUG_WITH_TYPE(TYPE, X)                                               \
+   do {                                                                         \
+-    THROW(Unreachable, ##__VA_ARGS__);                                         \
+-    __builtin_unreachable();                                                   \
+   } while (false)
+ 
++#define ADD_DEBUG_OPT(app)                                                     \
++  do {                                                                         \
++  } while (false)
++#endif
++
++#define DEBUG(X) DEBUG_WITH_TYPE(DEBUG_TYPE, X)
+ #endif
+diff --git a/lib/CMakeLists.txt b/lib/CMakeLists.txt
+index 1764228..364ac90 100644
+--- a/lib/CMakeLists.txt
++++ b/lib/CMakeLists.txt
+@@ -1,7 +1,25 @@
++include(FetchContent)
++FetchContent_Declare(
++    elfio
++    GIT_REPOSITORY https://github.com/serge1/ELFIO.git
++    GIT_TAG        8ae6cec5d60495822ecd57d736f66149da9b1830 # Release_3.12
++)
++FetchContent_MakeAvailable(elfio)
++
++FetchContent_Declare(
++    cli11
++    QUIET
++    GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
++    GIT_TAG v2.3.2
++)
++FetchContent_MakeAvailable(cli11)
++
+ add_library(rrisc32 STATIC
+     util.cpp
+     rrisc32.cpp
+     elf.cpp
+     assembly.cpp
+ )
+-target_link_libraries(rrisc32 elfio::elfio)
++target_link_libraries(rrisc32
++    PUBLIC elfio::elfio
++    PUBLIC CLI11::CLI11)
+diff --git a/lib/util.cpp b/lib/util.cpp
+index a9abbef..549f058 100644
+--- a/lib/util.cpp
++++ b/lib/util.cpp
+@@ -30,3 +30,19 @@ std::string trim(const std::string &s) {
+     --j;
+   return substr(s, i, j + 1);
+ }
++
++#ifndef NDEBUG
++std::string debugType;
++
++void setDebugType(const char *s) { debugType = s; }
++
++bool chkDebugType(const char *s) {
++  if (debugType.empty() || !s || !*s)
++    return false;
++  if (debugType == "all")
++    return true;
++  return debugType == s ||
++         debugType.find(std::string(s) + ",") != std::string::npos ||
++         debugType.find("," + std::string(s)) != std::string::npos;
++}
++#endif
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 6495ffc..cc78619 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -1,3 +1,4 @@
++include(FetchContent)
+ FetchContent_Declare(
+     googletest
+     GIT_REPOSITORY https://github.com/google/googletest.git
+@@ -7,6 +8,8 @@ FetchContent_Declare(
+ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+ FetchContent_MakeAvailable(googletest)
+ 
++link_libraries(rrisc32)
++
+ add_subdirectory(lib)
+ 
+ add_custom_target(check-all
+diff --git a/test/lib/test_assembly.cpp b/test/lib/test_assembly.cpp
+index 5a57e13..8ba6521 100644
+--- a/test/lib/test_assembly.cpp
++++ b/test/lib/test_assembly.cpp
+@@ -1,5 +1,7 @@
+ #include <gtest/gtest.h>
+ 
++#include "assembly.h"
++
+ // Demonstrate some basic assertions.
+ TEST(HelloTest, BasicAssertions) {
+   // Expect two strings not to be equal.
+diff --git a/tools/assemble/main.cpp b/tools/assemble/main.cpp
+index 1af3730..71485b2 100644
+--- a/tools/assemble/main.cpp
++++ b/tools/assemble/main.cpp
+@@ -2,7 +2,21 @@
+ 
+ using namespace assembly;
+ 
++#define DEBUG_TYPE "apple"
++
+ int main(int argc, char *argv[]) {
+-  Assembler as("test/tools/assemble/hello.s"); 
+-  CATCH(as.run(); as.run());
++  CLI::App app;
++
++  ADD_DEBUG_OPT(app);
++
++  CLI11_PARSE(app, argc, argv);
++
++  try {
++    Assembler as("test/tools/assemble/hello.s");
++    as.run();
++  } catch (Exception &ex) {
++    std::cerr << "!!! " << ex.what() << "\n";
++  }
++
++  DEBUG(std::cerr << "hello\n");
+ }
+diff --git a/tools/dump/main.cpp b/tools/dump/main.cpp
+index 90dcd2a..477ba68 100644
+--- a/tools/dump/main.cpp
++++ b/tools/dump/main.cpp
+@@ -5,12 +5,16 @@
+ using namespace elf;
+ 
+ int main() {
+-  CATCH({
+-    Reader reader("/media/d/work/learn-riscv/read/example/elf/a.o");
+-    reader.dump(std::cout);
+-  });
+-  CATCH({
+-    Reader reader("/media/d/work/learn-riscv/read/example/elf/b.exe");
+-    reader.dump(std::cout);
+-  });
++  try {
++    {
++      Reader reader("/media/d/work/learn-riscv/read/example/elf/a.o");
++      reader.dump(std::cout);
++    }
++    {
++      Reader reader("/media/d/work/learn-riscv/read/example/elf/b.exe");
++      reader.dump(std::cout);
++    }
++  } catch (Exception &ex) {
++    std::cerr << "!!! " << ex.what() << "\n";
++  }
+ }
