@@ -418,10 +418,11 @@ void assembleInstr(const AsmInstr &ai, std::list<Instr> &li) {
     instr.rs2 = ai.getOperand(2);
     break;
   case InstrType::I:
-    if (ai.getFormat() != "rr")
+    if (ai.getFormat() != "rri")
       THROW(UnknownInstructionFormat);
     instr.rd = ai.getOperand(0);
     instr.rs1 = ai.getOperand(1);
+    instr.imm = ai.getOperand(2);
     break;
   case InstrType::S:
   case InstrType::B:
@@ -460,8 +461,8 @@ void disassembleInstr(const std::list<Instr> &li,
     format = "rrr";
     break;
   case InstrType::I:
-    operands = {it->rd, it->rs1};
-    format = "rr";
+    operands = {it->rd, it->rs1, it->imm};
+    format = "rri";
     break;
   case InstrType::S:
   case InstrType::B:

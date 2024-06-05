@@ -5,12 +5,16 @@
 using namespace elf;
 
 int main() {
-  CATCH({
-    Reader reader("/media/d/work/learn-riscv/read/example/elf/a.o");
-    reader.dump(std::cout);
-  });
-  CATCH({
-    Reader reader("/media/d/work/learn-riscv/read/example/elf/b.exe");
-    reader.dump(std::cout);
-  });
+  try {
+    {
+      Reader reader("/media/d/work/learn-riscv/read/example/elf/a.o");
+      reader.dump(std::cout);
+    }
+    {
+      Reader reader("/media/d/work/learn-riscv/read/example/elf/b.exe");
+      reader.dump(std::cout);
+    }
+  } catch (Exception &ex) {
+    std::cerr << "!!! " << ex.what() << "\n";
+  }
 }

@@ -2,7 +2,9 @@
 
 set -e
 
-cmake -DCMAKE_BUILD_TYPE=Debug -B build -S .
+G=Ninja
+G="Unix Makefiles"
+cmake -DCMAKE_BUILD_TYPE=Debug -G"$G" -B build -S .
 cmake --build build
 
 # ./build/tools/dump/dump

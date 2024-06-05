@@ -4,8 +4,11 @@
 #include <cassert>
 #include <initializer_list>
 #include <iomanip>
+#include <ostream>
 #include <sstream>
 #include <string>
+
+#include "CLI/CLI.hpp"
 
 typedef unsigned long u64;
 typedef unsigned int u32;
@@ -108,17 +111,11 @@ private:
     NAME(const std::string &msg) : Exception(msg) {}                           \
   };
 
-#ifndef _DEBUG
-#ifndef NDEBUG
-#define _DEBUG 1
-#endif
-#endif
-
 // https://gcc.gnu.org/onlinedocs/gcc/Variadic-Macros.html
 //
 // if the variable arguments are omitted or empty, the ‘##’ operator
 // causes the preprocessor to remove the comma before it
-#if _DEBUG
+#ifndef NDEBUG
 #define THROW(NAME, ...)                                                       \
   do {                                                                         \
     throw NAME(join(" : ", #NAME, __FILE__ + (":" + std::to_string(__LINE__)), \
@@ -131,15 +128,6 @@ private:
   } while (false)
 #endif
 
-#define CATCH(X)                                                               \
-  do {                                                                         \
-    try {                                                                      \
-      X;                                                                       \
-    } catch (Exception & ex) {                                                 \
-      std::cerr << "!!! " << ex.what() << "\n";                                \
-    }                                                                          \
-  } while (false)
-
 DEFINE_EXCEPTION(Unreachable)
 
 #define UNREACHABLE(...)                                                       \
@@ -148,4 +136,40 @@ DEFINE_EXCEPTION(Unreachable)
     __builtin_unreachable();                                                   \
   } while (false)
 
+#ifndef NDEBUG
+extern std::string debugType;
+
+void setDebugType(const char *);
+
+bool chkDebugType(const char *);
+
+#define DEBUG_WITH_TYPE(TYPE, X)                                               \
+  do {                                                                         \
+    if (chkDebugType(TYPE)) {                                                  \
+      X;                                                                       \
+    }                                                                          \
+  } while (false)
+
+#define ADD_DEBUG_OPT(app)                                                     \
+  do {                                                                         \
+    (app).add_option("--debug", debugType);                                    \
+  } while (false)
+#else
+#define setDebugType(X)                                                        \
+  do {                                                                         \
+    (void)(X);                                                                 \
+  } while (false)
+
+#define chkDebugType(X) (false)
+
+#define DEBUG_WITH_TYPE(TYPE, X)                                               \
+  do {                                                                         \
+  } while (false)
+
+#define ADD_DEBUG_OPT(app)                                                     \
+  do {                                                                         \
+  } while (false)
+#endif
+
+#define DEBUG(X) DEBUG_WITH_TYPE(DEBUG_TYPE, X)
 #endif

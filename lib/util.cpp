@@ -30,3 +30,19 @@ std::string trim(const std::string &s) {
     --j;
   return substr(s, i, j + 1);
 }
+
+#ifndef NDEBUG
+std::string debugType;
+
+void setDebugType(const char *s) { debugType = s; }
+
+bool chkDebugType(const char *s) {
+  if (debugType.empty() || !s || !*s)
+    return false;
+  if (debugType == "all")
+    return true;
+  return debugType == s ||
+         debugType.find(std::string(s) + ",") != std::string::npos ||
+         debugType.find("," + std::string(s)) != std::string::npos;
+}
+#endif

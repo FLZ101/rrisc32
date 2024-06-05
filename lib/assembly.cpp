@@ -65,8 +65,9 @@ std::ostream &operator<<(std::ostream &os, Token::Type type) {
     os << "End";
     break;
   default:;
+    UNREACHABLE();
   }
-  UNREACHABLE();
+  return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const Token &tk) {
@@ -122,49 +123,42 @@ void Lexer::tokenize() {
 #define UNEXPECTED_CHAR()                                                      \
   THROW(AssemblyError, "unexpected character", s, i, toHexStr(c, true), c)
 
-#define SKIP_SPACE()                                                           \
-  do {                                                                         \
-    if (isSpace(c))                                                            \
-      continue;                                                                \
-  } while (false)
+#define SKIP_SPACE                                                             \
+  if (isSpace(c))                                                              \
+    continue;
 
-#define TRY_COMMENT()                                                          \
-  do {                                                                         \
-    if (c == '#') {                                                            \
-      state = Comment;                                                         \
-      continue;                                                                \
-    }                                                                          \
-  } while (false)
+#define TRY_COMMENT                                                            \
+  if (c == '#') {                                                              \
+    state = Comment;                                                           \
+    continue;                                                                  \
+  }
 
-#define TRY_END()                                                              \
-  do {                                                                         \
-    if (c == '\n') {                                                           \
-      state = End;                                                             \
-      continue;                                                                \
-    }                                                                          \
-  } while (false)
+#define TRY_END                                                                \
+  if (c == '\n') {                                                             \
+    state = End;                                                               \
+    continue;                                                                  \
+  }
 
-#define ADD_TOKEN(T) tokens.push_back({.type = T, .s = substr(s, i, j)})
+#define ADD_TOKEN(T) tokens.push_back({.type = T, .s = substr(s, j, i)})
 
 #define ADD_TOKEN_T(T) tokens.push_back({.type = T})
 
     switch (state) {
     case Begin:
-      SKIP_SPACE();
+      SKIP_SPACE
       if (isStatement(c)) {
         j = i;
         state = Statement;
         continue;
       }
-      TRY_COMMENT();
-      TRY_END();
+      TRY_COMMENT
+      TRY_END
       UNEXPECTED_CHAR();
       break;
     case Comment:
-      TRY_END();
+      TRY_END
       break;
     case End:
-      ADD_TOKEN(Token::End);
       for (Token &tk : tokens)
         cookToken(tk);
       return;
@@ -176,7 +170,7 @@ void Lexer::tokenize() {
       state = Expr;
       break;
     case Expr:
-      SKIP_SPACE();
+      SKIP_SPACE
       if (isDec(c)) {
         j = i;
         if (c == '0' && eat("x"))
@@ -217,8 +211,8 @@ void Lexer::tokenize() {
         ADD_TOKEN_T(Token::Comma);
         continue;
       }
-      TRY_COMMENT();
-      TRY_END();
+      TRY_COMMENT
+      TRY_END
       UNEXPECTED_CHAR();
       break;
     case Str:
@@ -335,15 +329,15 @@ void Lexer::cookToken(Token &tk) {
 }
 
 void Lexer::cookStatement(Token &tk) {
-  if (tk.s.front() == '.') {
-    tk.type = Token::Directive;
-    if (!checkDirective(tk.s))
-      THROW(AssemblyError, "invalid Directive", tk.s);
-  } else if (tk.s.back() == ':') {
+   if (tk.s.back() == ':') {
     tk.type = Token::Label;
     tk.s = substr(tk.s, 0, -1);
     if (!checkLabel(tk.s))
       THROW(AssemblyError, "invalid Label", tk.s);
+  } else if (tk.s.front() == '.') {
+    tk.type = Token::Directive;
+    if (!checkDirective(tk.s))
+      THROW(AssemblyError, "invalid Directive", tk.s);
   } else {
     tk.type = Token::Instr;
     if (!checkInstr(tk.s))
@@ -378,8 +372,9 @@ bool Lexer::checkLabel(const std::string &str) {
 
 void Lexer::cookStr(Token &tk) {
   std::string str;
-  for (unsigned i = 1; i < tk.s.size() - 1; ++i) {
-    if (tk.s[i] == '\\') {
+  for (unsigned i = 0; i < tk.s.size(); ++i) {
+    char c = tk.s[i];
+    if (c == '\\') {
       switch (tk.s[++i]) {
       case 'n':
         str.push_back('\n');
@@ -400,6 +395,8 @@ void Lexer::cookStr(Token &tk) {
       default:
         UNREACHABLE();
       }
+    } else {
+      str.push_back(c);
     }
   }
   tk.s = str;
@@ -409,13 +406,13 @@ s64 Lexer::parseInt(const std::string &str, bool hex) {
   s64 i = 0;
   if (hex) {
     for (char c : str) {
-      i *= 10;
-      i += c - '0';
+      i *= 16;
+      i += isDec(c) ? (c - '0') : (c - 'a' + 10);
     }
   } else {
     for (char c : str) {
-      i *= 16;
-      i += isDec(c) ? (c - '0') : (c - 'a' + 10);
+      i *= 10;
+      i += c - '0';
     }
   }
   return i;

@@ -16,65 +16,6 @@ namespace assembly {
 
 DEFINE_EXCEPTION(AssemblyError)
 
-struct Label {
-  char c;
-  s64 offset;
-  unsigned line;
-};
-
-struct Instr {
-  std::vector<std::string> tokens;
-  unsigned line;
-};
-
-struct Directive {
-  std::vector<std::string> tokens;
-  unsigned line;
-};
-
-struct Section {
-  Section(std::string name) : name(name) {}
-
-  Section(const Section &) = delete;
-  Section &operator=(const Section &) = delete;
-
-  const Label *findLabelB(char c, unsigned line);
-  const Label *findLabelF(char c, unsigned line);
-
-  std::string name;
-  s64 offset = 0;
-  u8 align = 3;
-
-  std::vector<Label> labels;
-  std::list<Instr> instrs;
-  std::list<Directive> directives;
-};
-
-struct Symbol {
-  Symbol() {}
-  Symbol(const std::string &name) { sym.name = name; }
-
-  elf::Symbol sym = {.name = "",
-                     .value = 0,
-                     .size = 0,
-                     .type = elf::STT_NOTYPE,
-                     .bind = elf::STB_LOCAL,
-                     .other = elf::STV_DEFAULT,
-                     .sec = elf::SHN_UNDEF};
-
-  Section *sec = nullptr;
-  s64 offset = 0;
-};
-
-struct ExprVal {
-  explicit ExprVal(s64 i) : i(i) {}
-  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset) {}
-
-  s64 i = 0;
-  Section *sec = nullptr;
-  s64 offset = 0;
-};
-
 struct Expr {
   enum Type { Reg, Str, Int, Sym, Func };
 
@@ -132,7 +73,7 @@ public:
 private:
   std::vector<std::unique_ptr<Expr>> parseArguments();
   std::unique_ptr<Expr> parseFunc();
-  
+
   const Token *eat(const std::initializer_list<Token::Type> &types);
   const Token *eat(Token::Type type);
   const Token *expect(const std::initializer_list<Token::Type> &types);
@@ -214,6 +155,49 @@ private:
   std::vector<Token> tokens;
 };
 
+struct Section {
+  explicit Section(const std::string &name) : name(name) {}
+
+  Section(const Section &) = delete;
+  Section &operator=(const Section &) = delete;
+
+  // const Label *findLabelB(char c, unsigned line);
+  // const Label *findLabelF(char c, unsigned line);
+
+  std::string name;
+  s64 offset = 0;
+  u8 align = 3;
+
+  // std::vector<Label> labels;
+  // std::list<Instr> instrs;
+  // std::list<Directive> directives;
+};
+
+struct Symbol {
+  Symbol() {}
+  Symbol(const std::string &name) { sym.name = name; }
+
+  elf::Symbol sym = {.name = "",
+                     .value = 0,
+                     .size = 0,
+                     .type = elf::STT_NOTYPE,
+                     .bind = elf::STB_LOCAL,
+                     .other = elf::STV_DEFAULT,
+                     .sec = elf::SHN_UNDEF};
+
+  Section *sec = nullptr;
+  s64 offset = 0;
+};
+
+struct ExprVal {
+  explicit ExprVal(s64 i) : i(i) {}
+  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset) {}
+
+  s64 i = 0;
+  Section *sec = nullptr;
+  s64 offset = 0;
+};
+
 class Assembler {
 public:
   explicit Assembler(std::string filename)
@@ -225,10 +209,6 @@ public:
   void run();
 
 private:
-  void parseDirective(const std::vector<std::string> &tokens);
-  void parseLabel(const std::vector<std::string> &tokens);
-  void parseInstr(const std::vector<std::string> &tokens);
-
   ExprVal evalExpr(const Expr *expr);
 
   Section *getSection(const std::string &name);
@@ -243,13 +223,15 @@ private:
   std::vector<std::string> lines;
   unsigned curLine = 0;
 
-  Section sections[4] = {Section(".text"), Section(".rodata"), Section(".data"),
-                         Section(".bss")};
+  Section secText{".text"};
+  Section secRodata{".rodata"};
+  Section secData{".data"};
+  Section secBss{".bss"};
+
+  Section *sections[4] = {&secText, &secRodata, &secData, &secBss};
   Section *curSec = nullptr;
 
   std::map<std::string, std::unique_ptr<Symbol>> symbols;
-
-  std::list<Directive> directives;
 
   std::string filename;
   elf::RRisc32Writer writer;
