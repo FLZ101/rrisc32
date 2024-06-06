@@ -36,12 +36,6 @@ std::string join(const std::string &sep, T x, Args... args) {
   return os.str();
 }
 
-template <typename T>
-std::ostream &operator<<(std::ostream &os, const std::unique_ptr<T> &x) {
-  os << *x;
-  return os;
-}
-
 template <typename It>
 std::string joinSeq(const std::string &sep, It beg, It end) {
   std::ostringstream os;
@@ -66,6 +60,13 @@ template <typename T> std::string toString(const T &x) {
   os << x;
   return os.str();
 }
+
+namespace std {
+template <typename T> ostream &operator<<(ostream &os, const unique_ptr<T> &x) {
+  os << *x;
+  return os;
+}
+} // namespace std
 
 template <typename T>
 std::string toHexStr(T x, bool ox = false, bool smart = true) {
