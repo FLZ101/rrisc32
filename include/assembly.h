@@ -8,38 +8,14 @@
 #include <string>
 #include <vector>
 
-#include "elf.h"
-#include "rrisc32.h"
 #include "util.h"
 
 namespace assembly {
 
 DEFINE_EXCEPTION(AssemblyError)
 
-struct Expr {
-  enum Type { Reg, Str, Int, Sym, Func };
-
-  Expr(s64 i) : i(i), type(Int) {}
-  Expr(const std::string &s, Type type = Str) : s(s), type(type) {}
-
-  Type type;
-
-  s64 i;
-  std::string s;
-  std::vector<std::unique_ptr<Expr>> operands;
-};
-
-struct Statement {
-  enum Type { Directive, Instr, Label };
-
-  Type type;
-
-  std::string s;
-  std::vector<std::unique_ptr<Expr>> arguments;
-};
-
 struct Token {
-  enum Type {
+  enum class Type {
     Directive,
     Instr,
     Label,
@@ -53,6 +29,7 @@ struct Token {
     Comma,
     End
   };
+  using enum Type;
 
   Type type;
 
@@ -64,25 +41,6 @@ std::ostream &operator<<(std::ostream &os, Token::Type type);
 
 std::ostream &operator<<(std::ostream &os, const Token &tk);
 
-class Parser {
-public:
-  Parser(const std::vector<Token> &tokens) : tokens(tokens), i(0) {}
-
-  std::unique_ptr<Statement> parse();
-
-private:
-  std::vector<std::unique_ptr<Expr>> parseArguments();
-  std::unique_ptr<Expr> parseFunc();
-
-  const Token *eat(const std::initializer_list<Token::Type> &types);
-  const Token *eat(Token::Type type);
-  const Token *expect(const std::initializer_list<Token::Type> &types);
-  const Token *expect(Token::Type type);
-
-  const std::vector<Token> &tokens;
-  unsigned i;
-};
-
 class Lexer {
 public:
   Lexer(const std::string &s) : s(s + "\n\n"), i(0) {}
@@ -92,21 +50,9 @@ public:
   const std::vector<Token> &getTokens() { return tokens; }
 
 private:
-  bool startsWith(const std::string &str) {
-    if (s.size() - i < str.size())
-      return false;
-    for (unsigned j = 0; j < str.size(); ++j)
-      if (s[i + j] != str[j])
-        return false;
-    return true;
-  }
-  bool eat(const std::string &str) {
-    if (startsWith(str)) {
-      i += str.size();
-      return true;
-    }
-    return false;
-  }
+  bool tryEat(const std::string &str);
+  bool eat(const std::string &str);
+
   bool isDec(char c) { return '0' <= c && c <= '9'; }
   bool isHex(char c) { return isDec(c) || ('a' <= c && c <= 'f'); }
   bool isReg(char c) { return isDec(c) || ('a' <= c && c <= 'z'); }
@@ -147,94 +93,75 @@ private:
   bool checkInstr(const std::string &str);
   bool checkLabel(const std::string &str);
 
-  s64 parseInt(const std::string &str, bool hex = false);
-
   std::string s;
   unsigned i;
 
   std::vector<Token> tokens;
 };
 
-struct Section {
-  explicit Section(const std::string &name) : name(name) {}
+struct Expr {
+  enum class Type { Reg, Str, Int, Sym, Func };
+  using enum Type;
 
-  Section(const Section &) = delete;
-  Section &operator=(const Section &) = delete;
+  Expr(s64 i) : i(i), type(Int) {}
+  Expr(const std::string &s, Type type = Str) : s(s), type(type) {}
 
-  // const Label *findLabelB(char c, unsigned line);
-  // const Label *findLabelF(char c, unsigned line);
+  Type type;
 
-  std::string name;
-  s64 offset = 0;
-  u8 align = 3;
-
-  // std::vector<Label> labels;
-  // std::list<Instr> instrs;
-  // std::list<Directive> directives;
+  s64 i;
+  std::string s;
+  std::vector<std::unique_ptr<Expr>> operands;
 };
 
-struct Symbol {
-  Symbol() {}
-  Symbol(const std::string &name) { sym.name = name; }
+std::ostream &operator<<(std::ostream &os, const Expr &expr);
 
-  elf::Symbol sym = {.name = "",
-                     .value = 0,
-                     .size = 0,
-                     .type = elf::STT_NOTYPE,
-                     .bind = elf::STB_LOCAL,
-                     .other = elf::STV_DEFAULT,
-                     .sec = elf::SHN_UNDEF};
+struct Statement {
+  enum class Type { Directive, Instr, Label };
+  using enum Type;
 
-  Section *sec = nullptr;
-  s64 offset = 0;
+  Type type;
+
+  std::string s;
+  std::vector<std::unique_ptr<Expr>> arguments;
 };
 
-struct ExprVal {
-  explicit ExprVal(s64 i) : i(i) {}
-  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset) {}
+std::ostream &operator<<(std::ostream &os, const Statement &stmt);
 
-  s64 i = 0;
-  Section *sec = nullptr;
-  s64 offset = 0;
-};
-
-class Assembler {
+class Parser {
 public:
-  explicit Assembler(std::string filename)
-      : filename(filename), writer(filename + ".o", elf::ET_REL) {}
+  Parser(const std::vector<Token> &tokens) : tokens(tokens), i(0) {}
 
-  Assembler(const Assembler &) = delete;
-  Assembler &operator=(const Assembler &) = delete;
+  std::unique_ptr<Statement> parse();
+
+private:
+  std::vector<std::unique_ptr<Expr>> parseArguments();
+  std::unique_ptr<Expr> parseFunc();
+
+  const Token *eat(const std::initializer_list<Token::Type> &types);
+  const Token *eat(Token::Type type);
+  const Token *expect(const std::initializer_list<Token::Type> &types);
+  const Token *expect(Token::Type type);
+
+  std::vector<Token> tokens;
+  unsigned i;
+};
+
+struct DriverOpts {
+  std::string inFile;
+  std::string outFile;
+};
+
+class Driver {
+public:
+  explicit Driver(const DriverOpts &opts) : opts(opts) {}
+
+  Driver(const Driver &) = delete;
+  Driver &operator=(const Driver &) = delete;
 
   void run();
 
 private:
-  ExprVal evalExpr(const Expr *expr);
-
-  Section *getSection(const std::string &name);
-
-  Symbol *getSymbol(const std::string &name);
-  Symbol *addSymbol(const std::string &name);
-
-  bool isLocalSymbolName(const std::string &name) {
-    return name.starts_with(".L");
-  }
-
-  std::vector<std::string> lines;
-  unsigned curLine = 0;
-
-  Section secText{".text"};
-  Section secRodata{".rodata"};
-  Section secData{".data"};
-  Section secBss{".bss"};
-
-  Section *sections[4] = {&secText, &secRodata, &secData, &secBss};
-  Section *curSec = nullptr;
-
-  std::map<std::string, std::unique_ptr<Symbol>> symbols;
-
-  std::string filename;
-  elf::RRisc32Writer writer;
+  const DriverOpts opts;
 };
 
 } // namespace assembly

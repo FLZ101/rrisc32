@@ -1,14 +1,12 @@
-#ifndef COMMON_H
-#define COMMON_H
+#ifndef UTIL_H
+#define UTIL_H
 
 #include <cassert>
-#include <initializer_list>
 #include <iomanip>
-#include <ostream>
+#include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
-
-#include "CLI/CLI.hpp"
 
 typedef unsigned long u64;
 typedef unsigned int u32;
@@ -21,37 +19,49 @@ typedef short s16;
 typedef char s8;
 
 template <typename T>
-void __join(std::ostringstream &os, std::string sep, T x) {
+void __join(std::ostringstream &os, const std::string &sep, T x) {
   os << x;
 }
 
 template <typename T, typename... Args>
-void __join(std::ostringstream &os, std::string sep, T x, Args... args) {
+void __join(std::ostringstream &os, const std::string &sep, T x, Args... args) {
   os << x << sep;
   __join(os, sep, args...);
 }
 
 template <typename T, typename... Args>
-std::string join(std::string sep, T x, Args... args) {
+std::string join(const std::string &sep, T x, Args... args) {
   std::ostringstream os;
   __join(os, sep, x, args...);
   return os.str();
 }
 
-template <typename T> std::string joinArr(std::string sep, T arr) {
+template <typename T>
+std::ostream &operator<<(std::ostream &os, const std::unique_ptr<T> &x) {
+  os << *x;
+  return os;
+}
+
+template <typename It>
+std::string joinSeq(const std::string &sep, It beg, It end) {
   std::ostringstream os;
   bool first = true;
-  for (auto &x : arr) {
+  for (; beg != end; ++beg) {
     if (first)
       first = false;
     else
       os << sep;
-    os << x;
+    os << *beg;
   }
   return os.str();
 }
 
-template <typename T> std::string toString(T x) {
+template <typename T>
+std::string joinSeq(const std::string &sep, const T &arr) {
+  return joinSeq(sep, std::begin(arr), std::end(arr));
+}
+
+template <typename T> std::string toString(const T &x) {
   std::ostringstream os;
   os << x;
   return os.str();
@@ -94,6 +104,11 @@ std::string substr(const std::string &s, int i);
 std::string substr(const std::string &s, int i, int j);
 
 std::string trim(const std::string &s);
+
+s64 parseInt(const std::string &str, bool hex = false);
+
+std::string escape(const std::string &s);
+std::string unescape(const std::string &s);
 
 class Exception : public std::exception {
 public:
@@ -149,11 +164,6 @@ bool chkDebugType(const char *);
       X;                                                                       \
     }                                                                          \
   } while (false)
-
-#define ADD_DEBUG_OPT(app)                                                     \
-  do {                                                                         \
-    (app).add_option("--debug", debugType);                                    \
-  } while (false)
 #else
 #define setDebugType(X)                                                        \
   do {                                                                         \
@@ -163,10 +173,6 @@ bool chkDebugType(const char *);
 #define chkDebugType(X) (false)
 
 #define DEBUG_WITH_TYPE(TYPE, X)                                               \
-  do {                                                                         \
-  } while (false)
-
-#define ADD_DEBUG_OPT(app)                                                     \
   do {                                                                         \
   } while (false)
 #endif

@@ -4,27 +4,9 @@
 #include <fstream>
 #include <functional>
 
+#include "elf.h"
+
 namespace assembly {
-
-// const Label *Section::findLabelB(char c, unsigned line) {
-//   auto it = std::lower_bound(
-//       labels.begin(), labels.end(),
-//       [](const Label &a, const Label &b) { return a.line < b.line; });
-//   while (--it >= labels.begin())
-//     if (it->c == c)
-//       return &*it;
-//   return nullptr;
-// }
-
-// const Label *Section::findLabelF(char c, unsigned line) {
-//   auto it = std::lower_bound(
-//       labels.begin(), labels.end(),
-//       [](const Label &a, const Label &b) { return a.line <= b.line; });
-//   while (it < labels.end())
-//     if (it->c == c)
-//       return &*it;
-//   return nullptr;
-// }
 
 std::ostream &operator<<(std::ostream &os, Token::Type type) {
   switch (type) {
@@ -94,6 +76,24 @@ std::ostream &operator<<(std::ostream &os, const Token &tk) {
     UNREACHABLE();
   }
   return os;
+}
+
+bool Lexer::tryEat(const std::string &str) {
+  unsigned k = i + 1;
+  if (s.size() - k < str.size())
+    return false;
+  for (unsigned j = 0; j < str.size(); ++j)
+    if (s[k + j] != str[j])
+      return false;
+  return true;
+}
+
+bool Lexer::eat(const std::string &str) {
+  if (tryEat(str)) {
+    i += str.size();
+    return true;
+  }
+  return false;
 }
 
 void Lexer::tokenize() {
@@ -237,6 +237,7 @@ void Lexer::tokenize() {
       case 't':
       case '0':
       case '"':
+      case '\\':
         state = Str;
         break;
       default:
@@ -329,7 +330,7 @@ void Lexer::cookToken(Token &tk) {
 }
 
 void Lexer::cookStatement(Token &tk) {
-   if (tk.s.back() == ':') {
+  if (tk.s.back() == ':') {
     tk.type = Token::Label;
     tk.s = substr(tk.s, 0, -1);
     if (!checkLabel(tk.s))
@@ -370,53 +371,7 @@ bool Lexer::checkLabel(const std::string &str) {
   return true;
 }
 
-void Lexer::cookStr(Token &tk) {
-  std::string str;
-  for (unsigned i = 0; i < tk.s.size(); ++i) {
-    char c = tk.s[i];
-    if (c == '\\') {
-      switch (tk.s[++i]) {
-      case 'n':
-        str.push_back('\n');
-        break;
-      case 't':
-        str.push_back('\t');
-        break;
-      case '0':
-        str.push_back('\0');
-        break;
-      case '"':
-        str.push_back('"');
-        break;
-      case 'x':
-        i += 2;
-        str.push_back(char(parseInt(substr(tk.s, i - 1, i + 1), true)));
-        break;
-      default:
-        UNREACHABLE();
-      }
-    } else {
-      str.push_back(c);
-    }
-  }
-  tk.s = str;
-}
-
-s64 Lexer::parseInt(const std::string &str, bool hex) {
-  s64 i = 0;
-  if (hex) {
-    for (char c : str) {
-      i *= 16;
-      i += isDec(c) ? (c - '0') : (c - 'a' + 10);
-    }
-  } else {
-    for (char c : str) {
-      i *= 10;
-      i += c - '0';
-    }
-  }
-  return i;
-}
+void Lexer::cookStr(Token &tk) { tk.s = unescape(tk.s); }
 
 void Lexer::cookInt(Token &tk) {
   if (tk.s.starts_with("0x")) {
@@ -429,6 +384,8 @@ void Lexer::cookInt(Token &tk) {
 std::unique_ptr<Statement> Parser::parse() {
   if (tokens.empty())
     return nullptr;
+
+  tokens.push_back({.type = Token::End});
 
   std::unique_ptr<Statement> res = std::make_unique<Statement>();
 
@@ -461,12 +418,13 @@ std::unique_ptr<Expr> Parser::parseFunc() {
     switch (tk->type) {
     case Token::Int:
       operand = std::move(std::make_unique<Expr>(tk->i));
+      ++i;
       break;
     case Token::Sym:
       operand = std::move(std::make_unique<Expr>(tk->s, Expr::Sym));
+      ++i;
       break;
     case Token::Func:
-      --i;
       operand = std::move(parseFunc());
       break;
     default:
@@ -484,17 +442,19 @@ std::vector<std::unique_ptr<Expr>> Parser::parseArguments() {
 #define ADD_ARG_I()                                                            \
   do {                                                                         \
     args.emplace_back(std::move(std::make_unique<Expr>(tk.i)));                \
+    ++i;                                                                       \
   } while (false)
 
 #define ADD_ARG_S(T)                                                           \
   do {                                                                         \
     args.emplace_back(std::move(std::make_unique<Expr>(tk.s, T)));             \
+    ++i;                                                                       \
   } while (false)
 
 #define UNEXPECTED_TOKEN() THROW(AssemblyError, "unexpected token", tk)
 
   bool comma = false;
-  for (; i < tokens.size(); ++i) {
+  while (i < tokens.size()) {
     const Token &tk = tokens[i];
     switch (tk.type) {
     case Token::Int:
@@ -510,7 +470,6 @@ std::vector<std::unique_ptr<Expr>> Parser::parseArguments() {
       ADD_ARG_S(Expr::Sym);
       break;
     case Token::Func:
-      --i;
       args.emplace_back(std::move(parseFunc()));
       continue;
     default:
@@ -529,6 +488,48 @@ std::vector<std::unique_ptr<Expr>> Parser::parseArguments() {
   UNREACHABLE();
 }
 
+std::ostream &operator<<(std::ostream &os, const Expr &expr) {
+  switch (expr.type) {
+  case Expr::Reg:
+    os << expr.s;
+    break;
+  case Expr::Str:
+    os << '"' << escape(expr.s) << '"';
+    break;
+  case Expr::Int:
+    os << toHexStr(expr.i);
+    break;
+  case Expr::Sym:
+    os << "$" << expr.s;
+    break;
+  case Expr::Func:
+    os << expr.s << "(" << joinSeq(", ", expr.operands) << ")";
+    break;
+  default:
+    UNREACHABLE();
+  }
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const Statement &stmt) {
+  switch (stmt.type) {
+  case Statement::Directive:
+  case Statement::Instr:
+    os << stmt.s;
+    break;
+  case Statement::Label:
+    os << stmt.s << ":";
+    break;
+  default:
+    UNREACHABLE();
+  }
+  if (!stmt.arguments.empty()) {
+    assert(stmt.type != Statement::Label);
+    os << " " << joinSeq(", ", stmt.arguments);
+  }
+  return os;
+}
+
 const Token *Parser::eat(const std::initializer_list<Token::Type> &types) {
   for (auto type : types)
     if (tokens[i].type == type)
@@ -541,24 +542,111 @@ const Token *Parser::eat(Token::Type type) { return eat({type}); }
 const Token *Parser::expect(const std::initializer_list<Token::Type> &types) {
   const Token *tk = eat(types);
   if (!tk)
-    THROW(AssemblyError, joinArr("|", types) + " expected",
+    THROW(AssemblyError, joinSeq("|", types) + " expected",
           toString(tokens[i]));
   return tk;
 }
 
 const Token *Parser::expect(Token::Type type) { return expect({type}); }
 
-void Assembler::run() {
-  {
-    std::fstream ifs(filename, std::ios::in | std::ios::binary);
-    if (!ifs)
-      THROW(AssemblyError, "read", filename);
-    for (std::string line; std::getline(ifs, line);)
-      lines.push_back(line);
-  }
-}
+struct Section {
+  explicit Section(const std::string &name) : name(name) {}
 
-Symbol *Assembler::getSymbol(const std::string &name) {
+  Section(const Section &) = delete;
+  Section &operator=(const Section &) = delete;
+
+  // const Label *findLabelB(char c, unsigned line);
+  // const Label *findLabelF(char c, unsigned line);
+
+  std::string name;
+  s64 offset = 0;
+  u8 align = 3;
+
+  // std::vector<Label> labels;
+  // std::list<Instr> instrs;
+  // std::list<Directive> directives;
+};
+
+// const Label *Section::findLabelB(char c, unsigned line) {
+//   auto it = std::lower_bound(
+//       labels.begin(), labels.end(),
+//       [](const Label &a, const Label &b) { return a.line < b.line; });
+//   while (--it >= labels.begin())
+//     if (it->c == c)
+//       return &*it;
+//   return nullptr;
+// }
+
+// const Label *Section::findLabelF(char c, unsigned line) {
+//   auto it = std::lower_bound(
+//       labels.begin(), labels.end(),
+//       [](const Label &a, const Label &b) { return a.line <= b.line; });
+//   while (it < labels.end())
+//     if (it->c == c)
+//       return &*it;
+//   return nullptr;
+// }
+
+struct Symbol {
+  Symbol() {}
+  Symbol(const std::string &name) { sym.name = name; }
+
+  elf::Symbol sym = {.name = "",
+                     .value = 0,
+                     .size = 0,
+                     .type = elf::STT_NOTYPE,
+                     .bind = elf::STB_LOCAL,
+                     .other = elf::STV_DEFAULT,
+                     .sec = elf::SHN_UNDEF};
+
+  Section *sec = nullptr;
+  s64 offset = 0;
+};
+
+struct ExprVal {
+  explicit ExprVal(s64 i) : i(i) {}
+  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset) {}
+
+  s64 i = 0;
+  Section *sec = nullptr;
+  s64 offset = 0;
+};
+
+class DriverImpl {
+public:
+  DriverImpl(const DriverOpts &opts) : opts(opts) {}
+
+  void run();
+
+private:
+  ExprVal evalExpr(const Expr *expr);
+
+  Section *getSection(const std::string &name);
+
+  Symbol *getSymbol(const std::string &name);
+  Symbol *addSymbol(const std::string &name);
+
+  bool isLocalSymbolName(const std::string &name) {
+    return name.starts_with(".L");
+  }
+
+  std::vector<std::string> lines;
+  unsigned curLine = 0;
+
+  Section secText{".text"};
+  Section secRodata{".rodata"};
+  Section secData{".data"};
+  Section secBss{".bss"};
+
+  Section *sections[4] = {&secText, &secRodata, &secData, &secBss};
+  Section *curSec = nullptr;
+
+  std::map<std::string, std::unique_ptr<Symbol>> symbols;
+
+  const DriverOpts opts;
+};
+
+Symbol *DriverImpl::getSymbol(const std::string &name) {
   if (symbols.count(name))
     return symbols[name].get();
   return nullptr;
@@ -662,5 +750,18 @@ Symbol *Assembler::getSymbol(const std::string &name) {
 //       return &sec;
 //   UNKNOWN_SECTION_NAME();
 // }
+
+void DriverImpl::run() {
+  {
+    std::fstream ifs(opts.inFile, std::ios::in | std::ios::binary);
+    if (!ifs)
+      THROW(AssemblyError, "read", opts.inFile);
+    for (std::string line; std::getline(ifs, line);)
+      lines.push_back(line);
+  }
+  // writer(filename + ".o", elf::ET_REL)
+}
+
+void Driver::run() { DriverImpl(opts).run(); }
 
 } // namespace assembly

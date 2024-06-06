@@ -20,6 +20,7 @@ add_library(rrisc32 STATIC
     elf.cpp
     assembly.cpp
 )
+
 target_link_libraries(rrisc32
     PUBLIC elfio::elfio
     PUBLIC CLI11::CLI11)

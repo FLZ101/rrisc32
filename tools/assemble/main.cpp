@@ -1,4 +1,5 @@
 #include "assembly.h"
+#include "cli.h"
 
 using namespace assembly;
 
@@ -12,7 +13,7 @@ int main(int argc, char *argv[]) {
   CLI11_PARSE(app, argc, argv);
 
   try {
-    Assembler as("test/tools/assemble/hello.s");
+    Driver as({.inFile = "test/tools/assemble/hello.s"});
     as.run();
   } catch (Exception &ex) {
     std::cerr << "!!! " << ex.what() << "\n";
