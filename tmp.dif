@@ -1,0 +1,859 @@
+diff --git a/include/assembly.h b/include/assembly.h
+index 8adcf76..70a735d 100644
+--- a/include/assembly.h
++++ b/include/assembly.h
+@@ -15,7 +15,7 @@ namespace assembly {
+ DEFINE_EXCEPTION(AssemblyError)
+ 
+ struct Token {
+-  enum class Type {
++  enum Type {
+     Directive,
+     Instr,
+     Label,
+@@ -29,7 +29,6 @@ struct Token {
+     Comma,
+     End
+   };
+-  using enum Type;
+ 
+   Type type;
+ 
+@@ -43,21 +42,16 @@ std::ostream &operator<<(std::ostream &os, const Token &tk);
+ 
+ class Lexer {
+ public:
+-  Lexer(const std::string &s) : s(s + "\n\n"), i(0) {}
++  Lexer(const std::string &s, std::vector<Token> &tokens)
++      : s(s + "\n\n"), i(0), tokens(tokens) {}
+ 
+   void tokenize();
+ 
+-  const std::vector<Token> &getTokens() { return tokens; }
++  static bool isDec(char c) { return '0' <= c && c <= '9'; }
++  static bool isHex(char c) { return isDec(c) || ('a' <= c && c <= 'f'); }
++  static bool isReg(char c) { return isDec(c) || ('a' <= c && c <= 'z'); }
+ 
+-private:
+-  bool tryEat(const std::string &str);
+-  bool eat(const std::string &str);
+-
+-  bool isDec(char c) { return '0' <= c && c <= '9'; }
+-  bool isHex(char c) { return isDec(c) || ('a' <= c && c <= 'f'); }
+-  bool isReg(char c) { return isDec(c) || ('a' <= c && c <= 'z'); }
+-
+-  bool isOneOf(char c, const char *s) {
++  static bool isOneOf(char c, const char *s) {
+     while (*s) {
+       if (*s == c)
+         return true;
+@@ -66,23 +60,29 @@ private:
+     return false;
+   }
+ 
+-  bool isSpace(char c) { return isOneOf(c, "\t "); }
++  static bool isSpace(char c) { return isOneOf(c, "\t "); }
+ 
+-  bool isLower(char c) { return 'a' <= c && c <= 'z'; }
+-  bool isUpper(char c) { return 'A' <= c && c <= 'Z'; }
+-  bool isAlpha(char c) { return isLower(c) || isUpper(c); }
++  static bool isLower(char c) { return 'a' <= c && c <= 'z'; }
++  static bool isUpper(char c) { return 'A' <= c && c <= 'Z'; }
++  static bool isAlpha(char c) { return isLower(c) || isUpper(c); }
+ 
+-  bool isDirective(char c) { return isInstr(c); }
+-  bool isInstr(char c) { return isLower(c) || c == '.'; }
+-  bool isLabel(char c) { return isAlpha(c) || isDec(c) || isOneOf(c, "_."); }
+-  bool isStatement(char c) {
++  static bool isDirective(char c) { return isInstr(c); }
++  static bool isInstr(char c) { return isLower(c) || c == '.'; }
++  static bool isLabel(char c) {
++    return isAlpha(c) || isDec(c) || isOneOf(c, "_.");
++  }
++  static bool isStatement(char c) {
+     return isDirective(c) || isInstr(c) || isLabel(c) || c == ':';
+   }
+ 
+-  bool isOperator(char c) { return isOneOf(c, "+-*/%<>|&^~"); }
+-  bool isFunc(char c) { return isOperator(c) || isLower(c) || c == '_'; }
++  static bool isOperator(char c) { return isOneOf(c, "+-*/%<>|&^~"); }
++  static bool isFunc(char c) { return isOperator(c) || isLower(c) || c == '_'; }
+ 
+-  bool isSym(char c) { return isLabel(c); }
++  static bool isSym(char c) { return isLabel(c); }
++
++private:
++  bool tryEat(const std::string &str);
++  bool eat(const std::string &str);
+ 
+   void cookToken(Token &tk);
+   void cookStatement(Token &tk);
+@@ -96,12 +96,13 @@ private:
+   std::string s;
+   unsigned i;
+ 
+-  std::vector<Token> tokens;
++  std::vector<Token> &tokens;
+ };
+ 
++std::vector<Token> tokenize(const std::string &s);
++
+ struct Expr {
+-  enum class Type { Reg, Str, Int, Sym, Func };
+-  using enum Type;
++  enum Type { Reg, Str, Int, Sym, Func };
+ 
+   Expr(s64 i) : i(i), type(Int) {}
+   Expr(const std::string &s, Type type = Str) : s(s), type(type) {}
+@@ -113,16 +114,19 @@ struct Expr {
+   std::vector<std::unique_ptr<Expr>> operands;
+ };
+ 
++std::ostream &operator<<(std::ostream &os, Expr::Type type);
++
+ std::ostream &operator<<(std::ostream &os, const Expr &expr);
+ 
+ struct Statement {
+-  enum class Type { Directive, Instr, Label };
+-  using enum Type;
++  enum Type { Directive, Instr, Label };
+ 
+   Type type;
+ 
+   std::string s;
+   std::vector<std::unique_ptr<Expr>> arguments;
++
++  unsigned offset = 0;
+ };
+ 
+ std::ostream &operator<<(std::ostream &os, const Statement &stmt);
+@@ -146,6 +150,8 @@ private:
+   unsigned i;
+ };
+ 
++std::unique_ptr<Statement> parse(const std::string &s);
++
+ struct DriverOpts {
+   std::string inFile;
+   std::string outFile;
+diff --git a/include/util.h b/include/util.h
+index 0a10b40..8e25d15 100644
+--- a/include/util.h
++++ b/include/util.h
+@@ -18,6 +18,62 @@ typedef int s32;
+ typedef short s16;
+ typedef char s8;
+ 
++class Exception : public std::exception {
++public:
++  Exception(const std::string &msg) : std::exception(), msg(msg) {}
++
++  const char *what() const noexcept override { return msg.c_str(); }
++
++private:
++  std::string msg;
++};
++
++#define DEFINE_EXCEPTION(NAME)                                                 \
++  class NAME : public Exception {                                              \
++  public:                                                                      \
++    NAME(const std::string &msg) : Exception(msg) {}                           \
++  };
++
++// https://gcc.gnu.org/onlinedocs/gcc/Variadic-Macros.html
++//
++// if the variable arguments are omitted or empty, the ‘##’ operator
++// causes the preprocessor to remove the comma before it
++#ifndef NDEBUG
++#define _MESSAGE(NAME, ...)                                                    \
++  join(" : ", #NAME, __FILE__ + (":" + toString(__LINE__)), ##__VA_ARGS__)
++#else
++#define _MESSAGE(NAME, ...) join(" : ", #NAME, ##__VA_ARGS__)
++#endif
++
++#define THROW(NAME, ...)                                                       \
++  do {                                                                         \
++    throw NAME(_MESSAGE(NAME, ##__VA_ARGS__));                                 \
++  } while (false)
++
++// clang-format off
++
++#define TRY() try {
++
++#define RETHROW(NAME, ...) \
++  } catch (Exception & ex) { \
++    throw NAME(_MESSAGE(NAME, ##__VA_ARGS__) + "\n" + ex.what()); \
++  }
++
++#define CATCH() \
++  } catch (Exception &ex) { \
++    std::cerr << "!!! " << ex.what() << "\n"; \
++  }
++
++// clang-format on
++
++DEFINE_EXCEPTION(Unreachable)
++
++#define UNREACHABLE(...)                                                       \
++  do {                                                                         \
++    THROW(Unreachable, ##__VA_ARGS__);                                         \
++    __builtin_unreachable();                                                   \
++  } while (false)
++
+ template <typename T>
+ void __join(std::ostringstream &os, const std::string &sep, T x) {
+   os << x;
+@@ -72,23 +128,26 @@ template <typename T>
+ std::string toHexStr(T x, bool ox = false, bool smart = true) {
+   std::ostringstream os;
+ 
++  u64 y = 0;
++  switch (sizeof(T)) {
++  case 1:
++    y = u8(x);
++    break;
++  case 2:
++    y = u16(x);
++    break;
++  case 4:
++    y = u32(x);
++    break;
++  case 8:
++    y = u64(x);
++    break;
++  default:
++    UNREACHABLE();
++  }
++
+   unsigned n = sizeof(T);
+   if (smart) {
+-    u64 y = 0;
+-    switch (sizeof(x)) {
+-    case 1:
+-      y = u8(x);
+-      break;
+-    case 2:
+-      y = u16(x);
+-      break;
+-    case 4:
+-      y = u32(x);
+-      break;
+-    case 8:
+-      y = u64(x);
+-    }
+-
+     n = 0;
+     do {
+       ++n;
+@@ -97,7 +156,8 @@ std::string toHexStr(T x, bool ox = false, bool smart = true) {
+ 
+   if (ox)
+     os << "0x";
+-  os << std::hex << std::setw(n * 2) << std::setfill('0') << x;
++  os << std::hex << std::nouppercase << std::setw(n * 2) << std::setfill('0')
++     << u64(x);
+   return os.str();
+ }
+ 
+@@ -111,47 +171,6 @@ s64 parseInt(const std::string &str, bool hex = false);
+ std::string escape(const std::string &s);
+ std::string unescape(const std::string &s);
+ 
+-class Exception : public std::exception {
+-public:
+-  Exception(const std::string &msg) : std::exception(), msg(msg) {}
+-
+-  const char *what() const noexcept override { return msg.c_str(); }
+-
+-private:
+-  std::string msg;
+-};
+-
+-#define DEFINE_EXCEPTION(NAME)                                                 \
+-  class NAME : public Exception {                                              \
+-  public:                                                                      \
+-    NAME(const std::string &msg) : Exception(msg) {}                           \
+-  };
+-
+-// https://gcc.gnu.org/onlinedocs/gcc/Variadic-Macros.html
+-//
+-// if the variable arguments are omitted or empty, the ‘##’ operator
+-// causes the preprocessor to remove the comma before it
+-#ifndef NDEBUG
+-#define THROW(NAME, ...)                                                       \
+-  do {                                                                         \
+-    throw NAME(join(" : ", #NAME, __FILE__ + (":" + std::to_string(__LINE__)), \
+-                    ##__VA_ARGS__));                                           \
+-  } while (false)
+-#else
+-#define THROW(NAME, ...)                                                       \
+-  do {                                                                         \
+-    throw NAME(toString(" : ", #NAME, ##__VA_ARGS__));                         \
+-  } while (false)
+-#endif
+-
+-DEFINE_EXCEPTION(Unreachable)
+-
+-#define UNREACHABLE(...)                                                       \
+-  do {                                                                         \
+-    THROW(Unreachable, ##__VA_ARGS__);                                         \
+-    __builtin_unreachable();                                                   \
+-  } while (false)
+-
+ #ifndef NDEBUG
+ extern std::string debugType;
+ 
+diff --git a/lib/assembly.cpp b/lib/assembly.cpp
+index 58f78f9..cc121f1 100644
+--- a/lib/assembly.cpp
++++ b/lib/assembly.cpp
+@@ -1,11 +1,11 @@
+ #include "assembly.h"
+ 
+-#include <algorithm>
+ #include <fstream>
+-#include <functional>
+ 
+ #include "elf.h"
+ 
++#define DEBUG_TYPE "assembly"
++
+ namespace assembly {
+ 
+ std::ostream &operator<<(std::ostream &os, Token::Type type) {
+@@ -381,6 +381,15 @@ void Lexer::cookInt(Token &tk) {
+   }
+ }
+ 
++std::vector<Token> tokenize(const std::string &s) {
++  std::vector<Token> tokens;
++
++  Lexer lexer(s, tokens);
++  lexer.tokenize();
++
++  return std::move(tokens);
++}
++
+ std::unique_ptr<Statement> Parser::parse() {
+   if (tokens.empty())
+     return nullptr;
+@@ -418,13 +427,12 @@ std::unique_ptr<Expr> Parser::parseFunc() {
+     switch (tk->type) {
+     case Token::Int:
+       operand = std::move(std::make_unique<Expr>(tk->i));
+-      ++i;
+       break;
+     case Token::Sym:
+       operand = std::move(std::make_unique<Expr>(tk->s, Expr::Sym));
+-      ++i;
+       break;
+     case Token::Func:
++      --i;
+       operand = std::move(parseFunc());
+       break;
+     default:
+@@ -471,23 +479,46 @@ std::vector<std::unique_ptr<Expr>> Parser::parseArguments() {
+       break;
+     case Token::Func:
+       args.emplace_back(std::move(parseFunc()));
+-      continue;
++      break;
+     default:
+       if (comma)
+         UNEXPECTED_TOKEN();
+       expect(Token::End);
+       return std::move(args);
+     }
+-    if (eat(Token::Comma))
+-      comma = true;
++    comma = eat(Token::Comma);
+   }
+ 
++#undef UNEXPECTED_TOKEN
+ #undef ADD_ARG_S
+ #undef ADD_ARG_I
+ 
+   UNREACHABLE();
+ }
+ 
++std::ostream &operator<<(std::ostream &os, Expr::Type type) {
++  switch (type) {
++  case Expr::Reg:
++    os << "Reg";
++    break;
++  case Expr::Str:
++    os << "Str";
++    break;
++  case Expr::Int:
++    os << "Int";
++    break;
++  case Expr::Sym:
++    os << "Sym";
++    break;
++  case Expr::Func:
++    os << "Func";
++    break;
++  default:
++    UNREACHABLE();
++  }
++  return os;
++}
++
+ std::ostream &operator<<(std::ostream &os, const Expr &expr) {
+   switch (expr.type) {
+   case Expr::Reg:
+@@ -503,7 +534,9 @@ std::ostream &operator<<(std::ostream &os, const Expr &expr) {
+     os << "$" << expr.s;
+     break;
+   case Expr::Func:
+-    os << expr.s << "(" << joinSeq(", ", expr.operands) << ")";
++    if (!Lexer::isOperator(expr.s[0]))
++      os << "%";
++    os << expr.s << "(" << joinSeq(" ", expr.operands) << ")";
+     break;
+   default:
+     UNREACHABLE();
+@@ -549,43 +582,23 @@ const Token *Parser::expect(const std::initializer_list<Token::Type> &types) {
+ 
+ const Token *Parser::expect(Token::Type type) { return expect({type}); }
+ 
++std::unique_ptr<Statement> parse(const std::string &s) {
++  return std::move(Parser(tokenize(s)).parse());
++}
++
+ struct Section {
+   explicit Section(const std::string &name) : name(name) {}
+ 
+   Section(const Section &) = delete;
+   Section &operator=(const Section &) = delete;
+ 
+-  // const Label *findLabelB(char c, unsigned line);
+-  // const Label *findLabelF(char c, unsigned line);
+-
+   std::string name;
+   s64 offset = 0;
+-  u8 align = 3;
+ 
+-  // std::vector<Label> labels;
+-  // std::list<Instr> instrs;
+-  // std::list<Directive> directives;
+-};
+-
+-// const Label *Section::findLabelB(char c, unsigned line) {
+-//   auto it = std::lower_bound(
+-//       labels.begin(), labels.end(),
+-//       [](const Label &a, const Label &b) { return a.line < b.line; });
+-//   while (--it >= labels.begin())
+-//     if (it->c == c)
+-//       return &*it;
+-//   return nullptr;
+-// }
++  static const u8 ALIGN = 12;
+ 
+-// const Label *Section::findLabelF(char c, unsigned line) {
+-//   auto it = std::lower_bound(
+-//       labels.begin(), labels.end(),
+-//       [](const Label &a, const Label &b) { return a.line <= b.line; });
+-//   while (it < labels.end())
+-//     if (it->c == c)
+-//       return &*it;
+-//   return nullptr;
+-// }
++  std::vector<std::unique_ptr<Statement>> stmts;
++};
+ 
+ struct Symbol {
+   Symbol() {}
+@@ -603,9 +616,23 @@ struct Symbol {
+   s64 offset = 0;
+ };
+ 
+-struct ExprVal {
+-  explicit ExprVal(s64 i) : i(i) {}
+-  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset) {}
++class ExprVal {
++public:
++  ExprVal() {}
++  explicit ExprVal(s64 i) : i(i), valid(true) {}
++  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset), valid(true) {}
++
++  bool isValid() { return valid; }
++
++  bool isInt() { return valid && !sec; }
++  s64 getI() { return i; }
++
++  bool isSym() { return valid && !!sec; }
++  Section *getSec() { return sec; }
++  s64 getOffset() { return offset; }
++
++private:
++  bool valid = false;
+ 
+   s64 i = 0;
+   Section *sec = nullptr;
+@@ -619,20 +646,17 @@ public:
+   void run();
+ 
+ private:
+-  ExprVal evalExpr(const Expr *expr);
++  void handleDirective(std::unique_ptr<Statement> stmt);
++  void handleInstr(std::unique_ptr<Statement> stmt);
++  void handleLabel(std::unique_ptr<Statement> stmt);
++
++  ExprVal evalExpr(const Expr &expr);
+ 
+   Section *getSection(const std::string &name);
+ 
+   Symbol *getSymbol(const std::string &name);
+   Symbol *addSymbol(const std::string &name);
+ 
+-  bool isLocalSymbolName(const std::string &name) {
+-    return name.starts_with(".L");
+-  }
+-
+-  std::vector<std::string> lines;
+-  unsigned curLine = 0;
+-
+   Section secText{".text"};
+   Section secRodata{".rodata"};
+   Section secData{".data"};
+@@ -641,31 +665,159 @@ private:
+   Section *sections[4] = {&secText, &secRodata, &secData, &secBss};
+   Section *curSec = nullptr;
+ 
+-  std::map<std::string, std::unique_ptr<Symbol>> symbols;
++  std::map<std::string, std::unique_ptr<Symbol>> symTab;
++
++  std::vector<std::unique_ptr<Statement>> delayedStmts;
+ 
+   const DriverOpts opts;
+ };
+ 
++#define CHECK_CURRENT_SECTION()                                                \
++  do {                                                                         \
++    if (!curSec)                                                               \
++      THROW(AssemblyError, "no current section");                              \
++  } while (false)
++
++#define CHECK_ARGUMENTS_SIZE(n)                                                \
++  do {                                                                         \
++    if (stmt->arguments.size() != n)                                           \
++      THROW(AssemblyError, toString(n) + " arguments expected");               \
++  } while (false)
++
++static void checkArgumentType(const Statement *stmt, unsigned i,
++                              const std::initializer_list<Expr::Type> &types) {
++  for (Expr::Type type : types)
++    if (stmt->arguments[i]->type == type)
++      return;
++  THROW(AssemblyError, joinSeq("|", types) + " expected", i,
++        stmt->arguments[i]->type);
++}
++
++#define CHECK_ARGUMENT_TYPE(i, ...)                                            \
++  do {                                                                         \
++    checkArgumentType(stmt.get(), i, {##__VA_ARGS__});                         \
++  } while (false)
++
++#define CHECK_OPERANDS_SIZE(n)                                                 \
++  do {                                                                         \
++    if (expr.operands.size() != n)                                             \
++      THROW(AssemblyError, toString(n) + " operands expected");                \
++  } while (false)
++
++void DriverImpl::run() {
++  std::vector<std::string> lines;
++  {
++    std::fstream ifs(opts.inFile, std::ios::in | std::ios::binary);
++    if (!ifs)
++      THROW(AssemblyError, "read", opts.inFile);
++    for (std::string line; std::getline(ifs, line);)
++      lines.push_back(std::move(line));
++  }
++
++  for (unsigned i = 0; i < lines.size(); ++i) {
++    std::unique_ptr<Statement> stmt = std::move(parse(lines[i]));
++
++    TRY()
++    switch (stmt->type) {
++    case Statement::Directive:
++      handleDirective(std::move(stmt));
++      break;
++    case Statement::Instr:
++      handleInstr(std::move(stmt));
++      break;
++    case Statement::Label:
++      handleLabel(std::move(stmt));
++      break;
++    default:
++      UNREACHABLE();
++    }
++    RETHROW(AssemblyError, i + 1, lines[i])
++  }
++  // writer(filename + ".o", elf::ET_REL)
++}
++
++ExprVal DriverImpl::evalExpr(const Expr &expr) {
++  switch (expr.type) {
++  case Expr::Reg:
++  case Expr::Str:
++    THROW(AssemblyError, "can not eval " + toString(expr.type));
++    break;
++  case Expr::Int:
++    return ExprVal(expr.i);
++    break;
++  case Expr::Sym:
++    Symbol *sym = getSymbol(expr.s);
++    if (!sym)
++      return ExprVal();
++    if (!sym->sec)
++      return ExprVal(sym->offset);
++    return ExprVal(sym->sec, sym->offset);
++    break;
++  case Expr::Func:
++    const std::string &name = expr.s;
++    if (name == "+") {
++    } else if (name == "-") {
++    } else if (name == "*") {
++    } else if (name == "/") {
++    } else if (name == "%") {
++    } else {
++      THROW(AssemblyError, "unknown Func " + name);
++    }
++    break;
++  default:
++    UNREACHABLE();
++  }
++}
++
++void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
++  const std::string &name = stmt->s;
++  if (name == ".global" || name == ".local" || name == ".weak" ||
++      name == ".type" || name == ".size") {
++    delayedStmts.emplace_back(std::move(stmt));
++  } else if (name == ".set") {
++    CHECK_ARGUMENTS_SIZE(2);
++    CHECK_ARGUMENT_TYPE(0, Expr::Sym);
++    CHECK_ARGUMENT_TYPE(1, Expr::Int, Expr::Func);
++  }
++}
++
++void DriverImpl::handleInstr(std::unique_ptr<Statement> stmt) {}
++
++void DriverImpl::handleLabel(std::unique_ptr<Statement> stmt) {
++  CHECK_CURRENT_SECTION();
++
++  const std::string &name = stmt->s;
++  Symbol *sym = addSymbol(name);
++  sym->sec = curSec;
++  sym->offset = curSec->offset;
++  if (!name.starts_with(".L"))
++    sym->sym.bind = elf::STB_GLOBAL;
++}
++
++Section *DriverImpl::getSection(const std::string &name) {
++  for (Section *sec : sections)
++    if (sec->name == name)
++      return sec;
++  return nullptr;
++}
++
+ Symbol *DriverImpl::getSymbol(const std::string &name) {
+-  if (symbols.count(name))
+-    return symbols[name].get();
++  if (symTab.count(name))
++    return symTab[name].get();
+   return nullptr;
+ }
+ 
+-// Symbol *Assembler::addSymbol(const std::string &name) {
+-//   if (isDigit(name[0]))
+-//     INVALID_SYMBOL_NAME(name);
+-//   for (char c : name) {
+-//     if (!isSymbolChar(c))
+-//       INVALID_SYMBOL_NAME(name);
+-//   }
+-//   if (name == ".")
+-//     INVALID_SYMBOL_NAME(name);
++Symbol *DriverImpl::addSymbol(const std::string &name) {
++  assert(name != ".");
++  if (!symTab.count(name))
++    symTab[name].reset(new Symbol(name));
++  return symTab[name].get();
++}
+ 
+-//   if (!symbols.count(name))
+-//     symbols[name].reset(new Symbol(name));
+-//   return symbols[name].get();
+-// }
++#undef CHECK_OPERANDS_SIZE
++#undef CHECK_ARGUMENT_TYPE
++#undef CHECK_ARGUMENTS_SIZE
++#undef CHECK_CURRENT_SECTION
+ 
+ // void Assembler::parseDirective(const std::vector<std::string> &tokens) {
+ //   std::string s = tokens[0];
+@@ -744,24 +896,6 @@ Symbol *DriverImpl::getSymbol(const std::string &name) {
+ //   }
+ // }
+ 
+-// Section *Assembler::getSection(const std::string &name) {
+-//   for (Section &sec : sections)
+-//     if (sec.name == name)
+-//       return &sec;
+-//   UNKNOWN_SECTION_NAME();
+-// }
+-
+-void DriverImpl::run() {
+-  {
+-    std::fstream ifs(opts.inFile, std::ios::in | std::ios::binary);
+-    if (!ifs)
+-      THROW(AssemblyError, "read", opts.inFile);
+-    for (std::string line; std::getline(ifs, line);)
+-      lines.push_back(line);
+-  }
+-  // writer(filename + ".o", elf::ET_REL)
+-}
+-
+ void Driver::run() { DriverImpl(opts).run(); }
+ 
+ } // namespace assembly
+diff --git a/lib/util.cpp b/lib/util.cpp
+index 775ae63..55d89d9 100644
+--- a/lib/util.cpp
++++ b/lib/util.cpp
+@@ -52,10 +52,6 @@ s64 parseInt(const std::string &str, bool hex) {
+ std::string escape(const std::string &s) {
+   std::string str;
+   for (char c : s) {
+-    if (::isprint(c)) {
+-      str.push_back(c);
+-      continue;
+-    }
+     switch (c) {
+     case '\n':
+       str.append("\\n");
+@@ -73,6 +69,11 @@ std::string escape(const std::string &s) {
+       str.append("\\\\");
+       break;
+     default:
++      if (std::isprint(c)) {
++        str.push_back(c);
++        continue;
++      }
++      str.append("\\x");
+       str.append(toHexStr(c));
+       break;
+     }
+diff --git a/test/lib/test_assembly.cpp b/test/lib/test_assembly.cpp
+index 7d18cbb..26c9275 100644
+--- a/test/lib/test_assembly.cpp
++++ b/test/lib/test_assembly.cpp
+@@ -38,9 +38,9 @@ namespace {
+ .global <sym>
+ .local
+ .weak
+-
+ .type <sym>, "function"|"object"
+ .size <sym>, <expr_int>
++
+ .section ".text"|".rodata"|".data"|".bss"
+ .set <sym>, <expr_int>
+ 
+@@ -61,16 +61,9 @@ namespace {
+   0
+ */
+ 
+-std::string tokenize(const std::string &s) {
+-  Lexer lexer(s);
+-  lexer.tokenize();
+-  return joinSeq(" ", lexer.getTokens());
+-}
+-
+ #define CHECK(a, b)                                                            \
+   do {                                                                         \
+-    std::string c = tokenize(a);                                               \
+-    EXPECT_STREQ(c.c_str(), b);                                                \
++    EXPECT_STREQ(joinSeq(" ", tokenize(a)).c_str(), b);                        \
+   } while (false)
+ 
+ TEST(LexerTest, Directive) {
+@@ -111,24 +104,45 @@ TEST(LexerTest, Func) {
+         "Directive|.fill Func|% ( Int|0a Func|add ( Sym|foo Int|14 ) )");
+ }
+ 
+-std::string parse(const std::string &s) {
+-  Lexer lexer(s);
+-  lexer.tokenize();
+-
+-  Parser parser(lexer.getTokens());
+-  std::unique_ptr<Statement> stmt = std::move(parser.parse());
+-  return toString(*stmt);
+-}
+-
+ #undef CHECK
+ 
+ #define CHECK(a, b)                                                            \
+   do {                                                                         \
+-    std::string c = parse(a);                                                  \
+-    EXPECT_STREQ(c.c_str(), b);                                                \
++    EXPECT_STREQ(toString(*(parse(a))).c_str(), b);                            \
+   } while (false)
+ 
+-TEST(ParserTest, Directive) { CHECK(R"---(.global $add)---", ".global $add"); }
++TEST(ParserTest, Directive) {
++  CHECK(R"---(.global $add)---", ".global $add");
++  CHECK(R"---(.type $add, "function")---", R"---(.type $add, "function")---");
++  CHECK(R"---(.db 1, 2, 3)---", ".db 01, 02, 03");
++}
++
++TEST(ParserTest, Instr) {
++  CHECK(R"---(add x4, x3, x2)---", "add x4, x3, x2");
++  CHECK(R"---(beq x4, x3, $.L10)---", "beq x4, x3, $.L10");
++}
++
++TEST(ParserTest, Label) {
++  CHECK(R"---(add:)---", "add:");
++  CHECK(R"---(.L10:)---", ".L10:");
++}
++
++TEST(ParserTest, Int) {
++  CHECK(R"---(.set $., 0xa0)---", ".set $., a0");
++  CHECK(R"---(.set $., 0x0123, 0xff01)---", ".set $., 0123, ff01");
++}
++
++TEST(ParserTest, Str) {
++  CHECK(R"---(.ascii "hello\0\n\t\"\\\x01\xab")---",
++        R"---(.ascii "hello\0\n\t\"\\\x01\xab")---");
++}
++
++TEST(ParserTest, Func) {
++  CHECK(R"---(.set $., -(10))---", ".set $., -(0a)");
++  CHECK(R"---(.fill +(10 $foo))---", ".fill +(0a $foo)");
++  CHECK(R"---(.fill %(10 %add($foo 20)))---",
++        R"---(.fill %(0a %add($foo 14)))---");
++}
+ 
+ #undef CHECK
+ 
+diff --git a/tools/assemble/main.cpp b/tools/assemble/main.cpp
+index 2488b03..71a582e 100644
+--- a/tools/assemble/main.cpp
++++ b/tools/assemble/main.cpp
+@@ -12,12 +12,10 @@ int main(int argc, char *argv[]) {
+ 
+   CLI11_PARSE(app, argc, argv);
+ 
+-  try {
+-    Driver as({.inFile = "test/tools/assemble/hello.s"});
+-    as.run();
+-  } catch (Exception &ex) {
+-    std::cerr << "!!! " << ex.what() << "\n";
+-  }
++  TRY()
++  Driver as({.inFile = "test/tools/assemble/hello.s"});
++  as.run();
++  CATCH()
+ 
+   DEBUG(std::cerr << "hello\n");
+ }
