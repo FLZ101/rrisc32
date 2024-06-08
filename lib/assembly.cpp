@@ -2,9 +2,10 @@
 
 #include <algorithm>
 #include <fstream>
-#include <functional>
 
 #include "elf.h"
+
+#define DEBUG_TYPE "assembly"
 
 namespace assembly {
 
@@ -318,7 +319,8 @@ void Lexer::cookToken(Token &tk) {
     break;
   case Token::Sym:
     tk.s = substr(tk.s, 1);
-    if (tk.s.size() < 1 || isDec(tk.s[0]))
+    if (tk.s.empty() ||
+        (isDec(tk.s[0]) && (tk.s.size() != 2 || !isOneOf(tk.s[1], "bf"))))
       THROW(AssemblyError, "invalid Sym", tk.s);
     break;
   case Token::Func:
@@ -363,7 +365,11 @@ bool Lexer::checkInstr(const std::string &str) {
 }
 
 bool Lexer::checkLabel(const std::string &str) {
-  if (str.size() < 2 || isDec(str[0]))
+  if (str.empty())
+    return false;
+  if (str == ".")
+    return false;
+  if (str.size() > 1 && isDec(str[0]))
     return false;
   for (char c : str)
     if (!isLabel(c))
@@ -379,6 +385,15 @@ void Lexer::cookInt(Token &tk) {
   } else {
     tk.i = parseInt(tk.s);
   }
+}
+
+std::vector<Token> tokenize(const std::string &s) {
+  std::vector<Token> tokens;
+
+  Lexer lexer(s, tokens);
+  lexer.tokenize();
+
+  return std::move(tokens);
 }
 
 std::unique_ptr<Statement> Parser::parse() {
@@ -418,13 +433,12 @@ std::unique_ptr<Expr> Parser::parseFunc() {
     switch (tk->type) {
     case Token::Int:
       operand = std::move(std::make_unique<Expr>(tk->i));
-      ++i;
       break;
     case Token::Sym:
       operand = std::move(std::make_unique<Expr>(tk->s, Expr::Sym));
-      ++i;
       break;
     case Token::Func:
+      --i;
       operand = std::move(parseFunc());
       break;
     default:
@@ -471,21 +485,44 @@ std::vector<std::unique_ptr<Expr>> Parser::parseArguments() {
       break;
     case Token::Func:
       args.emplace_back(std::move(parseFunc()));
-      continue;
+      break;
     default:
       if (comma)
         UNEXPECTED_TOKEN();
       expect(Token::End);
       return std::move(args);
     }
-    if (eat(Token::Comma))
-      comma = true;
+    comma = eat(Token::Comma);
   }
 
+#undef UNEXPECTED_TOKEN
 #undef ADD_ARG_S
 #undef ADD_ARG_I
 
   UNREACHABLE();
+}
+
+std::ostream &operator<<(std::ostream &os, Expr::Type type) {
+  switch (type) {
+  case Expr::Reg:
+    os << "Reg";
+    break;
+  case Expr::Str:
+    os << "Str";
+    break;
+  case Expr::Int:
+    os << "Int";
+    break;
+  case Expr::Sym:
+    os << "Sym";
+    break;
+  case Expr::Func:
+    os << "Func";
+    break;
+  default:
+    UNREACHABLE();
+  }
+  return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const Expr &expr) {
@@ -503,7 +540,9 @@ std::ostream &operator<<(std::ostream &os, const Expr &expr) {
     os << "$" << expr.s;
     break;
   case Expr::Func:
-    os << expr.s << "(" << joinSeq(", ", expr.operands) << ")";
+    if (!Lexer::isOperator(expr.s[0]))
+      os << "%";
+    os << expr.s << "(" << joinSeq(" ", expr.operands) << ")";
     break;
   default:
     UNREACHABLE();
@@ -549,47 +588,54 @@ const Token *Parser::expect(const std::initializer_list<Token::Type> &types) {
 
 const Token *Parser::expect(Token::Type type) { return expect({type}); }
 
+std::unique_ptr<Statement> parse(const std::string &s) {
+  return std::move(Parser(tokenize(s)).parse());
+}
+
 struct Section {
   explicit Section(const std::string &name) : name(name) {}
 
   Section(const Section &) = delete;
   Section &operator=(const Section &) = delete;
 
-  // const Label *findLabelB(char c, unsigned line);
-  // const Label *findLabelF(char c, unsigned line);
+  const Statement *findLabel(const std::string &name);
 
   std::string name;
   s64 offset = 0;
-  u8 align = 3;
 
-  // std::vector<Label> labels;
-  // std::list<Instr> instrs;
-  // std::list<Directive> directives;
+  static const u8 Alignment = 12;
+
+  std::vector<std::unique_ptr<Statement>> stmts;
+
+  ByteBuffer bb;
 };
 
-// const Label *Section::findLabelB(char c, unsigned line) {
-//   auto it = std::lower_bound(
-//       labels.begin(), labels.end(),
-//       [](const Label &a, const Label &b) { return a.line < b.line; });
-//   while (--it >= labels.begin())
-//     if (it->c == c)
-//       return &*it;
-//   return nullptr;
-// }
+const Statement *Section::findLabel(const std::string &name) {
+  if (stmts.empty())
+    return nullptr;
 
-// const Label *Section::findLabelF(char c, unsigned line) {
-//   auto it = std::lower_bound(
-//       labels.begin(), labels.end(),
-//       [](const Label &a, const Label &b) { return a.line <= b.line; });
-//   while (it < labels.end())
-//     if (it->c == c)
-//       return &*it;
-//   return nullptr;
-// }
+  auto it = std::lower_bound(stmts.cbegin(), stmts.cend(), offset,
+                             [](const std::unique_ptr<Statement> &stmt,
+                                s64 offset) { return stmt->offset < offset; });
+  if (name.ends_with('b')) {
+    while (++it >= stmts.cbegin())
+      if ((*it)->s[0] == name[0])
+        return it->get();
+  } else {
+    assert(name.ends_with('f'));
+    while (it != stmts.cend())
+      if ((*it)->s[0] == name[0])
+        return it->get();
+  }
+  return nullptr;
+}
 
 struct Symbol {
-  Symbol() {}
-  Symbol(const std::string &name) { sym.name = name; }
+  Symbol(const std::string &name) {
+    sym.name = name;
+    if (!sym.name.starts_with(".L"))
+      sym.bind = elf::STB_GLOBAL;
+  }
 
   elf::Symbol sym = {.name = "",
                      .value = 0,
@@ -603,14 +649,39 @@ struct Symbol {
   s64 offset = 0;
 };
 
-struct ExprVal {
-  explicit ExprVal(s64 i) : i(i) {}
-  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset) {}
+class ExprVal {
+public:
+  ExprVal() {}
+  explicit ExprVal(s64 i) : i(i), valid(true) {}
+  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset), valid(true) {}
+
+  bool isValid() const { return valid; }
+
+  bool isInt() const { return valid && !sec; }
+  s64 getI() const { return i; }
+
+  bool isSym() const { return valid && !!sec; }
+  Section *getSec() const { return sec; }
+  s64 getOffset() const { return offset; }
+
+private:
+  bool valid = false;
 
   s64 i = 0;
   Section *sec = nullptr;
   s64 offset = 0;
 };
+
+std::ostream &operator<<(std::ostream &os, const ExprVal &v) {
+  if (v.isInt()) {
+    os << "Int|" << v.getI();
+  } else if (v.isSym()) {
+    os << "Sym|" << v.getSec()->name << "|" << v.getOffset();
+  } else {
+    os << "!";
+  }
+  return os;
+}
 
 class DriverImpl {
 public:
@@ -619,19 +690,33 @@ public:
   void run();
 
 private:
-  ExprVal evalExpr(const Expr *expr);
+  void handleDirective(std::unique_ptr<Statement> stmt);
+  void handleInstr(std::unique_ptr<Statement> stmt);
+  void handleLabel(std::unique_ptr<Statement> stmt);
+
+  template <typename T> void handleDirectiveD(std::unique_ptr<Statement> stmt);
+  void handleDirectiveAscii(std::unique_ptr<Statement> stmt);
+
+  void handleDelayedStmts();
+
+  void cookSections();
+
+  void saveToFile();
+
+  ExprVal evalExpr(const Expr &expr);
+  ExprVal evalFunc(const Expr &expr);
 
   Section *getSection(const std::string &name);
 
   Symbol *getSymbol(const std::string &name);
+  Symbol *checkSymbol(const std::string &name);
   Symbol *addSymbol(const std::string &name);
 
-  bool isLocalSymbolName(const std::string &name) {
-    return name.starts_with(".L");
-  }
+  void setSymbolBind(const std::string &name, unsigned char bind);
+  void setSymbolType(const std::string &name, unsigned char type);
+  void setSymbolSize(const std::string &name, elf::Elf_Xword size);
 
-  std::vector<std::string> lines;
-  unsigned curLine = 0;
+  void checkCurSecName(const std::initializer_list<std::string> &names);
 
   Section secText{".text"};
   Section secRodata{".rodata"};
@@ -641,126 +726,511 @@ private:
   Section *sections[4] = {&secText, &secRodata, &secData, &secBss};
   Section *curSec = nullptr;
 
-  std::map<std::string, std::unique_ptr<Symbol>> symbols;
+  std::map<std::string, std::unique_ptr<Symbol>> symTab;
+
+  std::list<std::unique_ptr<Statement>> delayedStmts;
 
   const DriverOpts opts;
 };
 
-Symbol *DriverImpl::getSymbol(const std::string &name) {
-  if (symbols.count(name))
-    return symbols[name].get();
-  return nullptr;
+#define CHECK_CURRENT_SECTION()                                                \
+  do {                                                                         \
+    if (!curSec)                                                               \
+      THROW(AssemblyError, "no current section");                              \
+  } while (false)
+
+#define CHECK_ARGUMENTS_SIZE(n)                                                \
+  do {                                                                         \
+    if (stmt->arguments.size() != n)                                           \
+      THROW(AssemblyError, toString(n) + " arguments expected");               \
+  } while (false)
+
+#define CHECK_ARGUMENT_TYPE(i, type)                                           \
+  do {                                                                         \
+    if (stmt->arguments[i]->type != type)                                      \
+      THROW(AssemblyError, toString(type) + " expected", i,                    \
+            *stmt->arguments[i]);                                              \
+  } while (false)
+
+#define CHECK_OPERANDS_SIZE(n)                                                 \
+  do {                                                                         \
+    if (expr.operands.size() != n)                                             \
+      THROW(AssemblyError, toString(n) + " operands expected");                \
+  } while (false)
+
+#define CHECK_DUPLICATED_SYMBOL(name)                                          \
+  do {                                                                         \
+    if (getSymbol(name))                                                       \
+      THROW(AssemblyError, "duplicated symbol", name);                         \
+  } while (false)
+
+#define INVALID_STATEMENT()                                                    \
+  do {                                                                         \
+    THROW(AssemblyError, "invalid statement", *stmt);                          \
+  } while (false)
+
+ExprVal DriverImpl::evalFunc(const Expr &expr) {
+  const std::string &name = expr.s;
+  if (name == "-") {
+    if (expr.operands.size() == 1) {
+      ExprVal v = evalExpr(*expr.operands[0]);
+      if (v.isInt())
+        return ExprVal(-v.getI());
+      return ExprVal();
+    } else {
+      CHECK_OPERANDS_SIZE(2);
+      ExprVal v0 = evalExpr(*expr.operands[0]);
+      ExprVal v1 = evalExpr(*expr.operands[1]);
+      if (!v0.isValid() || !v1.isValid())
+        return ExprVal();
+      if (v0.isSym() && v1.isSym()) {
+        if (v0.getSec() == v1.getSec())
+          return ExprVal(v0.getOffset() - v1.getOffset());
+        return ExprVal();
+      }
+      if (v0.isSym())
+        return ExprVal(v0.getSec(), v0.getOffset() - v1.getI());
+      if (v1.isSym())
+        return ExprVal();
+      return ExprVal(v0.getI() - v1.getI());
+    }
+  } else if (name == "+") {
+    CHECK_OPERANDS_SIZE(2);
+    ExprVal v0 = evalExpr(*expr.operands[0]);
+    ExprVal v1 = evalExpr(*expr.operands[1]);
+    if (v0.isInt() && v1.isInt())
+      return ExprVal(v0.getI() + v1.getI());
+    if (v0.isInt() && v1.isSym())
+      return ExprVal(v1.getSec(), v0.getI() + v1.getOffset());
+    if (v0.isSym() && v1.isInt())
+      return ExprVal(v0.getSec(), v0.getOffset() + v1.getI());
+    return ExprVal();
+  } else {
+    THROW(AssemblyError, "unimplemented Func " + name);
+  }
 }
 
-// Symbol *Assembler::addSymbol(const std::string &name) {
-//   if (isDigit(name[0]))
-//     INVALID_SYMBOL_NAME(name);
-//   for (char c : name) {
-//     if (!isSymbolChar(c))
-//       INVALID_SYMBOL_NAME(name);
-//   }
-//   if (name == ".")
-//     INVALID_SYMBOL_NAME(name);
+ExprVal DriverImpl::evalExpr(const Expr &expr) {
+  switch (expr.type) {
+  case Expr::Reg:
+  case Expr::Str:
+    THROW(AssemblyError, "can not eval " + toString(expr.type));
+    break;
+  case Expr::Int:
+    return ExprVal(expr.i);
+    break;
+  case Expr::Sym: {
+    if (expr.s == ".") {
+      if (!curSec)
+        return ExprVal();
+      return ExprVal(curSec, curSec->offset);
+    }
 
-//   if (!symbols.count(name))
-//     symbols[name].reset(new Symbol(name));
-//   return symbols[name].get();
-// }
+    if (Lexer::isDec(expr.s[0])) {
+      assert(expr.s.size() == 2 && Lexer::isOneOf(expr.s[1], "bf"));
+      if (!curSec)
+        return ExprVal();
+      const Statement *stmt = curSec->findLabel(expr.s);
+      if (!stmt)
+        return ExprVal();
+      return ExprVal(curSec, stmt->offset);
+    }
 
-// void Assembler::parseDirective(const std::vector<std::string> &tokens) {
-//   std::string s = tokens[0];
-
-// #define SET_SYMBOLS_BIND(BIND)                                                 \
-//   do {                                                                         \
-//     if (tokens.size() < 2)                                                     \
-//       INVALID_DIRECTIVE();                                                     \
-//     for (unsigned i = 1; i < tokens.size(); ++i) {                             \
-//       addSymbol(tokens[i])->sym.bind = BIND;                                   \
-//     }                                                                          \
-//   } while (false)
-
-//   if (s == ".global") {
-//     SET_SYMBOLS_BIND(elf::STB_GLOBAL);
-//   } else if (s == ".local") {
-//     SET_SYMBOLS_BIND(elf::STB_LOCAL);
-//   } else if (s == ".weak") {
-//     SET_SYMBOLS_BIND(elf::STB_WEAK);
-//   } else if (s == ".type") {
-//     if (tokens.size() != 3)
-//       INVALID_DIRECTIVE();
-//     Symbol *sym = addSymbol(tokens[1]);
-//     std::string type = tokens[2];
-//     if (type == "func")
-//       sym->sym.type = elf::STT_FUNC;
-//     else if (type == "object")
-//       sym->sym.type = elf::STT_OBJECT;
-//     else
-//       UNKNOWN_SECTION_TYPE();
-//   } else if (s == ".size") {
-//     if (tokens.size() != 3)
-//       INVALID_DIRECTIVE();
-//     Symbol *sym = addSymbol(tokens[1]);
-//     directives.push_back({.tokens = tokens, .line = curLine});
-//   } else if (s == ".section") {
-//     if (tokens.size() != 2)
-//       INVALID_DIRECTIVE();
-//     const std::string &name = tokens[1];
-//     curSec = getSection(name);
-//     if (!getSymbol(name)) {
-//       Symbol *sym = addSymbol(name);
-//       sym->sec = curSec;
-//       sym->offset = curSec->offset;
-//     }
-//   } else if (s == ".set") {
-//   } else if (s == ".db") {
-//   } else if (s == ".dh") {
-//   } else if (s == ".dw") {
-//   } else if (s == ".dq") {
-//   } else if (s == ".ascii") {
-//   } else if (s == ".asciz") {
-//   } else if (s == ".fill") {
-//   } else if (s == ".align") {
-//   } else {
-//     UNKNOWN_DIRECTIVE();
-//   }
-// }
-
-// void Assembler::parseLabel(const std::vector<std::string> &tokens) {
-//   if (tokens.size() != 1)
-//     INVALID_DIRECTIVE();
-
-//   CHECK_CURRENT_SECTION();
-
-//   std::string name = substr(tokens[0], 0, -1);
-//   if (name.size() == 1 && isDigit(name[0])) {
-//     curSec->labels.push_back(
-//         {.c = name[0], .offset = curSec->offset, .line = curLine});
-//   } else {
-//     if (getSymbol(name))
-//       DUPLICATED_SYMBOL_NAME();
-//     Symbol *sym = addSymbol(name);
-//     sym->sec = curSec;
-//     sym->offset = curSec->offset;
-//   }
-// }
-
-// Section *Assembler::getSection(const std::string &name) {
-//   for (Section &sec : sections)
-//     if (sec.name == name)
-//       return &sec;
-//   UNKNOWN_SECTION_NAME();
-// }
+    Symbol *sym = getSymbol(expr.s);
+    if (!sym)
+      return ExprVal();
+    if (!sym->sec)
+      return ExprVal(sym->offset);
+    return ExprVal(sym->sec, sym->offset);
+  }
+  case Expr::Func:
+    return evalFunc(expr);
+  default:
+    UNREACHABLE();
+  }
+}
 
 void DriverImpl::run() {
+  std::vector<std::string> lines;
   {
     std::fstream ifs(opts.inFile, std::ios::in | std::ios::binary);
     if (!ifs)
       THROW(AssemblyError, "read", opts.inFile);
     for (std::string line; std::getline(ifs, line);)
-      lines.push_back(line);
+      lines.push_back(std::move(line));
   }
-  // writer(filename + ".o", elf::ET_REL)
+
+  for (unsigned i = 0; i < lines.size(); ++i) {
+    std::unique_ptr<Statement> stmt = std::move(parse(lines[i]));
+
+    TRY()
+    switch (stmt->type) {
+    case Statement::Directive:
+      handleDirective(std::move(stmt));
+      break;
+    case Statement::Instr:
+      checkCurSecName({".text"});
+      stmt->offset = curSec->offset;
+      curSec->offset += 4;
+      curSec->stmts.emplace_back(std::move(stmt));
+      break;
+    case Statement::Label:
+      handleLabel(std::move(stmt));
+      break;
+    default:
+      UNREACHABLE();
+    }
+    RETHROW(AssemblyError, i + 1, lines[i])
+  }
+
+  handleDelayedStmts();
+
+  cookSections();
+
+  saveToFile();
 }
+
+void DriverImpl::setSymbolBind(const std::string &name, unsigned char bind) {
+  Symbol *sym = checkSymbol(name);
+  sym->sym.bind = bind;
+}
+
+void DriverImpl::setSymbolType(const std::string &name, unsigned char type) {
+  Symbol *sym = checkSymbol(name);
+  sym->sym.type = type;
+}
+
+void DriverImpl::setSymbolSize(const std::string &name, elf::Elf_Xword size) {
+  Symbol *sym = checkSymbol(name);
+  sym->sym.size = size;
+}
+
+void DriverImpl::handleDelayedStmts() {
+  curSec = nullptr;
+  for (std::unique_ptr<Statement> &stmt : delayedStmts) {
+    const std::string &name = stmt->s;
+    if (name == ".global") {
+      setSymbolBind(stmt->arguments[0]->s, elf::STB_GLOBAL);
+    } else if (name == ".local") {
+      setSymbolBind(stmt->arguments[0]->s, elf::STB_LOCAL);
+    } else if (name == ".weak") {
+      setSymbolBind(stmt->arguments[0]->s, elf::STB_WEAK);
+    } else if (name == ".type") {
+      const Expr &e0 = *stmt->arguments[0];
+      const Expr &e1 = *stmt->arguments[1];
+      setSymbolType(e0.s, e1.s == "function" ? elf::STT_FUNC : elf::STT_OBJECT);
+    } else if (name == ".size") {
+      const Expr &e0 = *stmt->arguments[0];
+      const Expr &e1 = *stmt->arguments[1];
+      ExprVal v1 = evalExpr(e1);
+      if (!v1.isInt() || v1.getI() < 0)
+        INVALID_STATEMENT();
+      setSymbolSize(e0.s, v1.getI());
+    } else if (name == ".equ") {
+      const Expr &e0 = *stmt->arguments[0];
+      const Expr &e1 = *stmt->arguments[1];
+
+      CHECK_DUPLICATED_SYMBOL(e0.s);
+
+      ExprVal v1 = evalExpr(e1);
+      if (!v1.isValid())
+        INVALID_STATEMENT();
+
+      Symbol *sym = addSymbol(e0.s);
+      if (v1.isInt()) {
+        sym->offset = v1.getI();
+      } else {
+        assert(v1.isSym());
+        sym->sec = v1.getSec();
+        sym->offset = v1.getOffset();
+      }
+    } else {
+      UNREACHABLE();
+    }
+  }
+}
+
+void DriverImpl::handleInstr(std::unique_ptr<Statement> stmt) {
+}
+
+template <typename T>
+void DriverImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
+  if (curSec->name == ".bss")
+    return;
+  for (const auto &expr : stmt->arguments) {
+    ExprVal v = evalExpr(*expr);
+    if (!v.isInt())
+      INVALID_STATEMENT();
+    curSec->bb.appendInt(static_cast<T>(v.getI()));
+  }
+}
+
+void DriverImpl::handleDirectiveAscii(std::unique_ptr<Statement> stmt) {
+  if (curSec->name == ".bss")
+    return;
+  for (const auto &expr : stmt->arguments) {
+    curSec->bb.append(expr->s);
+    if (stmt->s == ".asciz")
+      curSec->bb.append('\0');
+  }
+}
+
+void DriverImpl::cookSections() {
+  for (Section *sec : sections) {
+    curSec = sec;
+    for (std::unique_ptr<Statement> &stmt : sec->stmts) {
+      curSec->offset = stmt->offset;
+      if (stmt->type == Statement::Instr) {
+        handleInstr(std::move(stmt));
+      } else if (stmt->type == Statement::Directive) {
+        const std::string &name = stmt->s;
+        if (name == ".db") {
+          handleDirectiveD<u8>(std::move(stmt));
+        } else if (name == ".dh") {
+          handleDirectiveD<u16>(std::move(stmt));
+        } else if (name == ".dw") {
+          handleDirectiveD<u32>(std::move(stmt));
+        } else if (name == ".dq") {
+          handleDirectiveD<u64>(std::move(stmt));
+        } else if (name == ".ascii" || name == ".asciz") {
+          handleDirectiveAscii(std::move(stmt));
+        } else if (name == ".fill") {
+          if (curSec->name == ".bss")
+            return;
+
+          unsigned n = stmt->arguments.size();
+
+          unsigned repeat = evalExpr(*stmt->arguments[0]).getI();
+          unsigned size = 1;
+          s64 value = 0;
+
+          if (n >= 2)
+            size = evalExpr(*stmt->arguments[1]).getI();
+
+          if (n == 3)
+            value = evalExpr(*stmt->arguments[2]).getI();
+
+          for (unsigned i = 0; i < repeat; ++i)
+            curSec->bb.append(value, size);
+        } else if (name == ".align") {
+          if (curSec->name == ".bss")
+            return;
+
+          unsigned repeat =
+              P2ALIGN(stmt->offset, evalExpr(*stmt->arguments[0]).getI()) -
+              stmt->offset;
+
+          for (unsigned i = 0; i < repeat; ++i)
+            curSec->bb.append('\0');
+        } else {
+          UNREACHABLE();
+        }
+      }
+    }
+  }
+}
+
+void DriverImpl::saveToFile() {
+  // TODO: writer(filename + ".o", elf::ET_REL)
+}
+
+void DriverImpl::checkCurSecName(
+    const std::initializer_list<std::string> &names) {
+  CHECK_CURRENT_SECTION();
+  for (const std::string &name : names)
+    if (name == curSec->name)
+      return;
+  THROW(AssemblyError, joinSeq("|", names) + " expected",
+        toString(curSec->name));
+}
+
+void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
+  const std::string &name = stmt->s;
+  if (name == ".global" || name == ".local" || name == ".weak") {
+    CHECK_ARGUMENTS_SIZE(1);
+    CHECK_ARGUMENT_TYPE(0, Expr::Sym);
+    delayedStmts.emplace_back(std::move(stmt));
+    return;
+  }
+  if (name == ".type") {
+    CHECK_ARGUMENTS_SIZE(2);
+    CHECK_ARGUMENT_TYPE(0, Expr::Sym);
+    CHECK_ARGUMENT_TYPE(1, Expr::Str);
+
+    const Expr &e1 = *stmt->arguments[1];
+    if (e1.s != "function" && e1.s != "object")
+      THROW(AssemblyError, "symbol type must be function/object", e1.s);
+
+    delayedStmts.emplace_back(std::move(stmt));
+    return;
+  }
+  if (name == ".size") {
+    CHECK_ARGUMENTS_SIZE(2);
+    CHECK_ARGUMENT_TYPE(0, Expr::Sym);
+    delayedStmts.emplace_back(std::move(stmt));
+    return;
+  }
+  if (name == ".equ") {
+    CHECK_ARGUMENTS_SIZE(2);
+    CHECK_ARGUMENT_TYPE(0, Expr::Sym);
+    const Expr &e0 = *stmt->arguments[0];
+    const Expr &e1 = *stmt->arguments[1];
+    if (e0.s == ".")
+      THROW(AssemblyError, "can not define .");
+    CHECK_DUPLICATED_SYMBOL(e0.s);
+
+    ExprVal v1 = evalExpr(e1);
+    if (!v1.isValid()) {
+      delayedStmts.emplace_front(std::move(stmt));
+      return;
+    }
+    Symbol *sym = addSymbol(e0.s);
+    if (v1.isInt()) {
+      sym->offset = v1.getI();
+    } else {
+      assert(v1.isSym());
+      sym->sec = v1.getSec();
+      sym->offset = v1.getOffset();
+    }
+    return;
+  }
+
+  if (name == ".section") {
+    CHECK_ARGUMENTS_SIZE(1);
+    CHECK_ARGUMENT_TYPE(0, Expr::Str);
+    const std::string &secName = stmt->arguments[0]->s;
+    Section *sec = getSection(secName);
+    if (!sec)
+      THROW(AssemblyError, "unknown section", secName);
+    curSec = sec;
+    return;
+  }
+
+  if (name == ".db" || name == ".dh" || name == ".dw" || name == ".dq") {
+    checkCurSecName({".rodata", ".data"});
+    unsigned n = stmt->arguments.size();
+    if (name == ".dh")
+      n *= 2;
+    else if (name == ".dw")
+      n *= 4;
+    else if (name == ".dq")
+      n *= 8;
+    curSec->offset += n;
+    curSec->stmts.emplace_back(std::move(stmt));
+    return;
+  }
+
+  if (name == ".ascii" || name == ".asciz") {
+    checkCurSecName({".rodata", ".data"});
+    unsigned n = 0;
+    for (unsigned i = 0; i < stmt->arguments.size(); ++i) {
+      CHECK_ARGUMENT_TYPE(i, Expr::Str);
+      n += stmt->arguments[i]->s.size();
+      if (name == ".asciz")
+        ++n;
+    }
+    curSec->offset += n;
+    curSec->stmts.emplace_back(std::move(stmt));
+    return;
+  }
+
+  if (name == ".fill") {
+    checkCurSecName({".rodata", ".data", ".bss"});
+    unsigned n = stmt->arguments.size();
+    if (n < 1 || n > 3)
+      THROW(AssemblyError, "1/2/3 arguments expected", *stmt);
+
+    ExprVal v0 = evalExpr(*stmt->arguments[0]);
+    if (!v0.isInt() || v0.getI() < 0)
+      INVALID_STATEMENT();
+    unsigned repeat = v0.getI();
+    if (!repeat)
+      return;
+
+    unsigned size = 1;
+    if (n >= 2) {
+      ExprVal v1 = evalExpr(*stmt->arguments[1]);
+      if (!v1.isInt() || !v1.getI())
+        INVALID_STATEMENT();
+      size = v1.getI();
+      if (size != 1 && size != 2 && size != 4 && size != 8)
+        INVALID_STATEMENT();
+    }
+
+    curSec->offset += repeat * size;
+    curSec->stmts.emplace_back(std::move(stmt));
+    return;
+  }
+
+  if (name == ".align") {
+    CHECK_CURRENT_SECTION();
+    CHECK_ARGUMENTS_SIZE(1);
+    ExprVal v = evalExpr(*stmt->arguments[0]);
+    if (!v.isInt() || v.getI() > Section::Alignment || v.getI() < 0)
+      INVALID_STATEMENT();
+    if (v.getI() == 0)
+      return;
+    stmt->offset = curSec->offset;
+    curSec->offset = P2ALIGN(curSec->offset, v.getI());
+    curSec->stmts.emplace_back(std::move(stmt));
+    return;
+  }
+
+  THROW(AssemblyError, "unknown directive", name);
+}
+
+void DriverImpl::handleLabel(std::unique_ptr<Statement> stmt) {
+  CHECK_CURRENT_SECTION();
+
+  stmt->offset = curSec->offset;
+
+  const std::string &name = stmt->s;
+  if (name.size() == 1 && Lexer::isDec(name[0])) {
+    curSec->stmts.emplace_back(std::move(stmt));
+    return;
+  }
+
+  CHECK_DUPLICATED_SYMBOL(name);
+
+  Symbol *sym = addSymbol(name);
+  sym->sec = curSec;
+  sym->offset = curSec->offset;
+  if (!name.starts_with(".L"))
+    sym->sym.bind = elf::STB_GLOBAL;
+}
+
+Section *DriverImpl::getSection(const std::string &name) {
+  for (Section *sec : sections)
+    if (sec->name == name)
+      return sec;
+  return nullptr;
+}
+
+Symbol *DriverImpl::getSymbol(const std::string &name) {
+  if (symTab.count(name))
+    return symTab[name].get();
+  return nullptr;
+}
+
+Symbol *DriverImpl::checkSymbol(const std::string &name) {
+  Symbol *sym = getSymbol(name);
+  if (!sym)
+    THROW(AssemblyError, "symbol does not exist", name);
+  return sym;
+}
+
+Symbol *DriverImpl::addSymbol(const std::string &name) {
+  assert(!symTab.count(name) && name != ".");
+  symTab[name].reset(new Symbol(name));
+  return symTab[name].get();
+}
+
+#undef INVALID_STATEMENT
+#undef CHECK_DUPLICATED_SYMBOL
+#undef CHECK_OPERANDS_SIZE
+#undef CHECK_ARGUMENT_TYPE
+#undef CHECK_ARGUMENTS_SIZE
+#undef CHECK_CURRENT_SECTION
 
 void Driver::run() { DriverImpl(opts).run(); }
 

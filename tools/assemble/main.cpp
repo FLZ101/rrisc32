@@ -12,12 +12,10 @@ int main(int argc, char *argv[]) {
 
   CLI11_PARSE(app, argc, argv);
 
-  try {
-    Driver as({.inFile = "test/tools/assemble/hello.s"});
-    as.run();
-  } catch (Exception &ex) {
-    std::cerr << "!!! " << ex.what() << "\n";
-  }
+  TRY()
+  Driver as({.inFile = "test/tools/assemble/hello.s"});
+  as.run();
+  CATCH()
 
   DEBUG(std::cerr << "hello\n");
 }

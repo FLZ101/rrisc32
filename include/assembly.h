@@ -15,7 +15,7 @@ namespace assembly {
 DEFINE_EXCEPTION(AssemblyError)
 
 struct Token {
-  enum class Type {
+  enum Type {
     Directive,
     Instr,
     Label,
@@ -29,7 +29,6 @@ struct Token {
     Comma,
     End
   };
-  using enum Type;
 
   Type type;
 
@@ -43,21 +42,16 @@ std::ostream &operator<<(std::ostream &os, const Token &tk);
 
 class Lexer {
 public:
-  Lexer(const std::string &s) : s(s + "\n\n"), i(0) {}
+  Lexer(const std::string &s, std::vector<Token> &tokens)
+      : s(s + "\n\n"), i(0), tokens(tokens) {}
 
   void tokenize();
 
-  const std::vector<Token> &getTokens() { return tokens; }
+  static bool isDec(char c) { return '0' <= c && c <= '9'; }
+  static bool isHex(char c) { return isDec(c) || ('a' <= c && c <= 'f'); }
+  static bool isReg(char c) { return isDec(c) || ('a' <= c && c <= 'z'); }
 
-private:
-  bool tryEat(const std::string &str);
-  bool eat(const std::string &str);
-
-  bool isDec(char c) { return '0' <= c && c <= '9'; }
-  bool isHex(char c) { return isDec(c) || ('a' <= c && c <= 'f'); }
-  bool isReg(char c) { return isDec(c) || ('a' <= c && c <= 'z'); }
-
-  bool isOneOf(char c, const char *s) {
+  static bool isOneOf(char c, const char *s) {
     while (*s) {
       if (*s == c)
         return true;
@@ -66,23 +60,29 @@ private:
     return false;
   }
 
-  bool isSpace(char c) { return isOneOf(c, "\t "); }
+  static bool isSpace(char c) { return isOneOf(c, "\t "); }
 
-  bool isLower(char c) { return 'a' <= c && c <= 'z'; }
-  bool isUpper(char c) { return 'A' <= c && c <= 'Z'; }
-  bool isAlpha(char c) { return isLower(c) || isUpper(c); }
+  static bool isLower(char c) { return 'a' <= c && c <= 'z'; }
+  static bool isUpper(char c) { return 'A' <= c && c <= 'Z'; }
+  static bool isAlpha(char c) { return isLower(c) || isUpper(c); }
 
-  bool isDirective(char c) { return isInstr(c); }
-  bool isInstr(char c) { return isLower(c) || c == '.'; }
-  bool isLabel(char c) { return isAlpha(c) || isDec(c) || isOneOf(c, "_."); }
-  bool isStatement(char c) {
+  static bool isDirective(char c) { return isInstr(c); }
+  static bool isInstr(char c) { return isLower(c) || c == '.'; }
+  static bool isLabel(char c) {
+    return isAlpha(c) || isDec(c) || isOneOf(c, "_.");
+  }
+  static bool isStatement(char c) {
     return isDirective(c) || isInstr(c) || isLabel(c) || c == ':';
   }
 
-  bool isOperator(char c) { return isOneOf(c, "+-*/%<>|&^~"); }
-  bool isFunc(char c) { return isOperator(c) || isLower(c) || c == '_'; }
+  static bool isOperator(char c) { return isOneOf(c, "+-*/%<>|&^~"); }
+  static bool isFunc(char c) { return isOperator(c) || isLower(c) || c == '_'; }
 
-  bool isSym(char c) { return isLabel(c); }
+  static bool isSym(char c) { return isLabel(c); }
+
+private:
+  bool tryEat(const std::string &str);
+  bool eat(const std::string &str);
 
   void cookToken(Token &tk);
   void cookStatement(Token &tk);
@@ -96,12 +96,13 @@ private:
   std::string s;
   unsigned i;
 
-  std::vector<Token> tokens;
+  std::vector<Token> &tokens;
 };
 
+std::vector<Token> tokenize(const std::string &s);
+
 struct Expr {
-  enum class Type { Reg, Str, Int, Sym, Func };
-  using enum Type;
+  enum Type { Reg, Str, Int, Sym, Func };
 
   Expr(s64 i) : i(i), type(Int) {}
   Expr(const std::string &s, Type type = Str) : s(s), type(type) {}
@@ -113,16 +114,19 @@ struct Expr {
   std::vector<std::unique_ptr<Expr>> operands;
 };
 
+std::ostream &operator<<(std::ostream &os, Expr::Type type);
+
 std::ostream &operator<<(std::ostream &os, const Expr &expr);
 
 struct Statement {
-  enum class Type { Directive, Instr, Label };
-  using enum Type;
+  enum Type { Directive, Instr, Label };
 
   Type type;
 
   std::string s;
   std::vector<std::unique_ptr<Expr>> arguments;
+
+  unsigned offset = 0;
 };
 
 std::ostream &operator<<(std::ostream &os, const Statement &stmt);
@@ -145,6 +149,8 @@ private:
   std::vector<Token> tokens;
   unsigned i;
 };
+
+std::unique_ptr<Statement> parse(const std::string &s);
 
 struct DriverOpts {
   std::string inFile;

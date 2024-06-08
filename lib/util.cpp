@@ -52,10 +52,6 @@ s64 parseInt(const std::string &str, bool hex) {
 std::string escape(const std::string &s) {
   std::string str;
   for (char c : s) {
-    if (::isprint(c)) {
-      str.push_back(c);
-      continue;
-    }
     switch (c) {
     case '\n':
       str.append("\\n");
@@ -73,6 +69,11 @@ std::string escape(const std::string &s) {
       str.append("\\\\");
       break;
     default:
+      if (std::isprint(c)) {
+        str.push_back(c);
+        continue;
+      }
+      str.append("\\x");
       str.append(toHexStr(c));
       break;
     }

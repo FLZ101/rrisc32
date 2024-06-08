@@ -18,19 +18,76 @@ typedef int s32;
 typedef short s16;
 typedef char s8;
 
+class Exception : public std::exception {
+public:
+  Exception(const std::string &msg) : std::exception(), msg(msg) {}
+
+  const char *what() const noexcept override { return msg.c_str(); }
+
+private:
+  std::string msg;
+};
+
+#define DEFINE_EXCEPTION(NAME)                                                 \
+  class NAME : public Exception {                                              \
+  public:                                                                      \
+    NAME(const std::string &msg) : Exception(msg) {}                           \
+  };
+
+// https://gcc.gnu.org/onlinedocs/gcc/Variadic-Macros.html
+//
+// if the variable arguments are omitted or empty, the ‘##’ operator
+// causes the preprocessor to remove the comma before it
+#ifndef NDEBUG
+#define _MESSAGE(NAME, ...)                                                    \
+  join(" : ", #NAME, __FILE__ + (":" + toString(__LINE__)), ##__VA_ARGS__)
+#else
+#define _MESSAGE(NAME, ...) join(" : ", #NAME, ##__VA_ARGS__)
+#endif
+
+#define THROW(NAME, ...)                                                       \
+  do {                                                                         \
+    throw NAME(_MESSAGE(NAME, ##__VA_ARGS__));                                 \
+  } while (false)
+
+// clang-format off
+
+#define TRY() try {
+
+#define RETHROW(NAME, ...) \
+  } catch (Exception & ex) { \
+    throw NAME(_MESSAGE(NAME, ##__VA_ARGS__) + "\n" + ex.what()); \
+  }
+
+#define CATCH() \
+  } catch (Exception &ex) { \
+    std::cerr << "!!! " << ex.what() << "\n"; \
+  }
+
+// clang-format on
+
+DEFINE_EXCEPTION(Unreachable)
+
+#define UNREACHABLE(...)                                                       \
+  do {                                                                         \
+    THROW(Unreachable, ##__VA_ARGS__);                                         \
+    __builtin_unreachable();                                                   \
+  } while (false)
+
 template <typename T>
-void __join(std::ostringstream &os, const std::string &sep, T x) {
+void __join(std::ostringstream &os, const std::string &sep, const T &x) {
   os << x;
 }
 
 template <typename T, typename... Args>
-void __join(std::ostringstream &os, const std::string &sep, T x, Args... args) {
+void __join(std::ostringstream &os, const std::string &sep, T x,
+            const Args &...args) {
   os << x << sep;
   __join(os, sep, args...);
 }
 
 template <typename T, typename... Args>
-std::string join(const std::string &sep, T x, Args... args) {
+std::string join(const std::string &sep, T x, const Args &...args) {
   std::ostringstream os;
   __join(os, sep, x, args...);
   return os.str();
@@ -72,32 +129,37 @@ template <typename T>
 std::string toHexStr(T x, bool ox = false, bool smart = true) {
   std::ostringstream os;
 
-  unsigned n = sizeof(T);
-  if (smart) {
-    u64 y = 0;
-    switch (sizeof(x)) {
-    case 1:
-      y = u8(x);
-      break;
-    case 2:
-      y = u16(x);
-      break;
-    case 4:
-      y = u32(x);
-      break;
-    case 8:
-      y = u64(x);
-    }
+  u64 y = 0;
+  switch (sizeof(T)) {
+  case 1:
+    y = u8(x);
+    break;
+  case 2:
+    y = u16(x);
+    break;
+  case 4:
+    y = u32(x);
+    break;
+  case 8:
+    y = u64(x);
+    break;
+  default:
+    UNREACHABLE();
+  }
 
+  unsigned n = sizeof(T);
+  u64 z = y;
+  if (smart) {
     n = 0;
     do {
       ++n;
-    } while (y >>= 8);
+    } while (z >>= 8);
   }
 
   if (ox)
     os << "0x";
-  os << std::hex << std::setw(n * 2) << std::setfill('0') << x;
+  os << std::hex << std::nouppercase << std::setw(n * 2) << std::setfill('0')
+     << y;
   return os.str();
 }
 
@@ -111,46 +173,59 @@ s64 parseInt(const std::string &str, bool hex = false);
 std::string escape(const std::string &s);
 std::string unescape(const std::string &s);
 
-class Exception : public std::exception {
-public:
-  Exception(const std::string &msg) : std::exception(), msg(msg) {}
+#define ALIGN(x, n) (((x) + ((n) - 1)) & ~((n) - 1))
+#define P2ALIGN(x, n) ALIGN((x), (2 << (n)))
 
-  const char *what() const noexcept override { return msg.c_str(); }
+class ByteBuffer {
+public:
+  ByteBuffer() {}
+
+  void append(s64 value, unsigned size) {
+    switch (size) {
+    case 1:
+      appendInt<u8>(value & 0xff);
+      break;
+    case 2:
+      appendInt<u16>(value & 0xffff);
+      break;
+    case 4:
+      appendInt<u32>(value & 0xffffffff);
+      break;
+    case 8:
+      appendInt<u64>(value);
+      break;
+    default:
+      UNREACHABLE();
+    }
+  }
+
+  template <typename T> void appendInt(T x) {
+    switch (sizeof(T)) {
+    case 1:
+    case 2:
+    case 4:
+    case 8:
+      break;
+    default:
+      UNREACHABLE();
+    }
+    unsigned i = 0;
+    while (i < sizeof(T)) {
+      s.push_back(x & 0xff);
+      ++i;
+      x >>= 8;
+    }
+  }
+
+  void append(const std::string &str) { s.append(str); }
+
+  void append(char c) { s.push_back(c); }
+
+  const char *getData() { return s.c_str(); }
 
 private:
-  std::string msg;
+  std::string s;
 };
-
-#define DEFINE_EXCEPTION(NAME)                                                 \
-  class NAME : public Exception {                                              \
-  public:                                                                      \
-    NAME(const std::string &msg) : Exception(msg) {}                           \
-  };
-
-// https://gcc.gnu.org/onlinedocs/gcc/Variadic-Macros.html
-//
-// if the variable arguments are omitted or empty, the ‘##’ operator
-// causes the preprocessor to remove the comma before it
-#ifndef NDEBUG
-#define THROW(NAME, ...)                                                       \
-  do {                                                                         \
-    throw NAME(join(" : ", #NAME, __FILE__ + (":" + std::to_string(__LINE__)), \
-                    ##__VA_ARGS__));                                           \
-  } while (false)
-#else
-#define THROW(NAME, ...)                                                       \
-  do {                                                                         \
-    throw NAME(toString(" : ", #NAME, ##__VA_ARGS__));                         \
-  } while (false)
-#endif
-
-DEFINE_EXCEPTION(Unreachable)
-
-#define UNREACHABLE(...)                                                       \
-  do {                                                                         \
-    THROW(Unreachable, ##__VA_ARGS__);                                         \
-    __builtin_unreachable();                                                   \
-  } while (false)
 
 #ifndef NDEBUG
 extern std::string debugType;
