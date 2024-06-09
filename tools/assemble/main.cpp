@@ -13,7 +13,7 @@ int main(int argc, char *argv[]) {
   CLI11_PARSE(app, argc, argv);
 
   TRY()
-  Driver as({.inFile = "test/tools/assemble/hello.s"});
+  Assembler as({.inFile = "test/tools/assemble/hello.s"});
   as.run();
   CATCH()
 

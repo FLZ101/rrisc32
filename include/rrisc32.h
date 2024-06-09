@@ -3,22 +3,63 @@
 
 #include "util.h"
 
-#include <cassert>
 #include <functional>
-#include <list>
-#include <regex>
-#include <utility>
-#include <vector>
 
 namespace rrisc32 {
 
-DEFINE_EXCEPTION(IllegalInstruction)
-DEFINE_EXCEPTION(DividedByZero)
-DEFINE_EXCEPTION(SegmentFault)
-DEFINE_EXCEPTION(UnknownInstructionFormat)
-DEFINE_EXCEPTION(UnknownRegister)
+DEFINE_EXCEPTION(RRisc32Err)
 
-u32 getReg(std::string name);
+#define UNKNOWN_INSTRUCTION(...)                                               \
+  THROW(RRisc32Err, "invalid instruction", ##__VA_ARGS__)
+
+#define UNKNOWN_REGISTER(...)                                                  \
+  THROW(RRisc32Err, "invalid register", ##__VA_ARGS__)
+
+#define ILLEGAL_INSTRUCTION(...)                                               \
+  THROW(RRisc32Err, "illegal instruction", ##__VA_ARGS__)
+
+#define DIVIDED_BY_ZERO(...) THROW(RRisc32Err, "divided by zero", ##__VA_ARGS__)
+
+#define SEGMENT_FAULT(...) THROW(RRisc32Err, "segment fault", ##__VA_ARGS__)
+
+namespace Reg {
+
+const u32 x0 = 0;
+const u32 x1 = 1;
+const u32 x2 = 2;
+const u32 x3 = 3;
+const u32 x4 = 4;
+const u32 x5 = 5;
+const u32 x6 = 6;
+const u32 x7 = 7;
+const u32 x8 = 8;
+const u32 x9 = 9;
+const u32 x10 = 10;
+const u32 x11 = 11;
+const u32 x12 = 12;
+const u32 x13 = 13;
+const u32 x14 = 14;
+const u32 x15 = 15;
+const u32 x16 = 16;
+const u32 x17 = 17;
+const u32 x18 = 18;
+const u32 x19 = 19;
+const u32 x20 = 20;
+const u32 x21 = 21;
+const u32 x22 = 22;
+const u32 x23 = 23;
+const u32 x24 = 24;
+const u32 x25 = 25;
+const u32 x26 = 26;
+const u32 x27 = 27;
+const u32 x28 = 28;
+const u32 x29 = 29;
+const u32 x30 = 30;
+const u32 x31 = 31;
+
+} // namespace Reg
+
+u32 getReg(const std::string &name);
 
 enum class InstrType { Invalid, R, I, S, B, U, J };
 
@@ -26,23 +67,21 @@ class Machine;
 
 struct InstrDesc {
 
-  using executeFn = std::function<void(Machine &, u32, u32, u32, u32)>;
+  using exeFn = std::function<void(Machine &, u32, u32, u32, u32)>;
 
   InstrDesc(InstrType type, u32 opcode, u32 funct3, u32 funct7,
-            std::string name, executeFn execute)
+            const std::string &name, exeFn execute)
       : type(type), opcode(opcode), funct3(funct3), funct7(funct7), name(name),
-        execute(execute) {}
+        exe(exe) {}
 
   const InstrType type;
   const u32 opcode, funct3, funct7;
 
   const std::string name;
 
-  const executeFn execute;
+  const exeFn exe;
 };
 
-// Except for the 5-bit immediates used in CSR instructions, immediates are
-// always sign-extended.
 struct Instr {
   const InstrDesc *desc = nullptr;
   u32 rd = 0, rs1 = 0, rs2 = 0, imm = 0;
@@ -51,54 +90,6 @@ struct Instr {
 u32 encodeInstr(const Instr &inst);
 
 void decodeInstr(u32 b, Instr &inst);
-
-struct AsmInstr {
-  AsmInstr() {}
-  AsmInstr(const std::string &name) : name(name) {}
-  AsmInstr(const std::string &name, const std::vector<u32> &operands,
-           const std::string &format)
-      : name(name), operands(operands), format(format) {
-    assert(operands.size() == format.size());
-  }
-
-  AsmInstr &operator=(const AsmInstr &other) {
-    name = other.name;
-    operands = other.operands;
-    format = other.format;
-    return *this;
-  }
-
-  std::string getName() const { return name; }
-
-  u32 getOperand(size_t i) const {
-    assert(i < operands.size());
-    return operands[i];
-  }
-
-  std::string getFormat() const { return format; }
-
-private:
-  std::string name;
-  std::vector<u32> operands;
-  std::string format;
-};
-
-struct PseudoInstrDesc {
-  using expandFn =
-      std::function<bool(const AsmInstr &ai, std::list<Instr> &li)>;
-  using combineFn =
-      std::function<bool(const std::list<Instr> &li,
-                         std::list<Instr>::const_iterator &it, AsmInstr &ai)>;
-
-  std::regex namePattern;
-  expandFn expand;
-  combineFn combine;
-};
-
-void assembleInstr(const AsmInstr &ai, std::list<Instr> &li);
-
-void disassembleInstr(const std::list<Instr> &li,
-                      std::list<Instr>::const_iterator &it, AsmInstr &ai);
 
 class Machine {
 public:
@@ -110,12 +101,14 @@ public:
   ~Machine() { delete mem; }
 
   u32 ri() { return ip; }
+
   void wi(u32 value) { ip = value; }
 
   template <typename T = u32> T rr(unsigned i) {
     assert(i < 32);
     return static_cast<T>(reg[i]);
   }
+
   void wr(unsigned i, u32 value) {
     assert(i < 32);
     reg[i] = value;
@@ -123,12 +116,13 @@ public:
 
   template <typename T = u32> T rm(u32 addr) {
     if (addr + sizeof(T) >= sz)
-      THROW(SegmentFault);
+      SEGMENT_FAULT();
     return *reinterpret_cast<T *>(mem + addr);
   }
+
   template <typename T = u32> void wm(u32 addr, T value) {
     if (addr + sizeof(T) >= sz)
-      THROW(SegmentFault);
+      SEGMENT_FAULT();
     *reinterpret_cast<T *>(mem + addr) = value;
   }
 
@@ -143,7 +137,9 @@ private:
   size_t sz = 0;
 };
 
-void initRRisc32();
+struct RRisc32Init {
+  RRisc32Init();
+};
 
 } // namespace rrisc32
 #endif

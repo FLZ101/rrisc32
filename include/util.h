@@ -170,11 +170,20 @@ std::string trim(const std::string &s);
 
 s64 parseInt(const std::string &str, bool hex = false);
 
-std::string escape(const std::string &s);
+std::string escape(char c, bool wrap = true);
+std::string escape(const std::string &s, bool wrap = true);
 std::string unescape(const std::string &s);
 
 #define ALIGN(x, n) (((x) + ((n) - 1)) & ~((n) - 1))
 #define P2ALIGN(x, n) ALIGN((x), (2 << (n)))
+
+template <typename T, typename Container = std::initializer_list<T>>
+bool isOneOf(const T &x, const Container &elements) {
+  for (const auto &element : elements)
+    if (element == x)
+      return true;
+  return false;
+}
 
 class ByteBuffer {
 public:

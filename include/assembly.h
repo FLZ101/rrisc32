@@ -51,15 +51,6 @@ public:
   static bool isHex(char c) { return isDec(c) || ('a' <= c && c <= 'f'); }
   static bool isReg(char c) { return isDec(c) || ('a' <= c && c <= 'z'); }
 
-  static bool isOneOf(char c, const char *s) {
-    while (*s) {
-      if (*s == c)
-        return true;
-      ++s;
-    }
-    return false;
-  }
-
   static bool isSpace(char c) { return isOneOf(c, "\t "); }
 
   static bool isLower(char c) { return 'a' <= c && c <= 'z'; }
@@ -106,12 +97,14 @@ struct Expr {
 
   Expr(s64 i) : i(i), type(Int) {}
   Expr(const std::string &s, Type type = Str) : s(s), type(type) {}
+  Expr(const std::string &s, const std::vector<Expr> &operands)
+      : s(s), type(Func), operands(operands) {}
 
   Type type;
 
   s64 i;
   std::string s;
-  std::vector<std::unique_ptr<Expr>> operands;
+  std::vector<Expr> operands;
 };
 
 std::ostream &operator<<(std::ostream &os, Expr::Type type);
@@ -124,7 +117,7 @@ struct Statement {
   Type type;
 
   std::string s;
-  std::vector<std::unique_ptr<Expr>> arguments;
+  std::vector<Expr> arguments;
 
   unsigned offset = 0;
 };
@@ -138,8 +131,8 @@ public:
   std::unique_ptr<Statement> parse();
 
 private:
-  std::vector<std::unique_ptr<Expr>> parseArguments();
-  std::unique_ptr<Expr> parseFunc();
+  std::vector<Expr> parseArguments();
+  Expr parseFunc();
 
   const Token *eat(const std::initializer_list<Token::Type> &types);
   const Token *eat(Token::Type type);
@@ -152,22 +145,22 @@ private:
 
 std::unique_ptr<Statement> parse(const std::string &s);
 
-struct DriverOpts {
+struct AssemblerOpts {
   std::string inFile;
   std::string outFile;
 };
 
-class Driver {
+class Assembler {
 public:
-  explicit Driver(const DriverOpts &opts) : opts(opts) {}
+  explicit Assembler(const AssemblerOpts &opts) : opts(opts) {}
 
-  Driver(const Driver &) = delete;
-  Driver &operator=(const Driver &) = delete;
+  Assembler(const Assembler &) = delete;
+  Assembler &operator=(const Assembler &) = delete;
 
   void run();
 
 private:
-  const DriverOpts opts;
+  const AssemblerOpts opts;
 };
 
 } // namespace assembly

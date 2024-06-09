@@ -122,7 +122,7 @@ void Lexer::tokenize() {
     char c = s[i];
 
 #define UNEXPECTED_CHAR()                                                      \
-  THROW(AssemblyError, "unexpected character", s, i, toHexStr(c, true), c)
+  THROW(AssemblyError, "unexpected character", escape(s), i, escape(c))
 
 #define SKIP_SPACE                                                             \
   if (isSpace(c))                                                              \
@@ -424,44 +424,42 @@ std::unique_ptr<Statement> Parser::parse() {
   return std::move(res);
 }
 
-std::unique_ptr<Expr> Parser::parseFunc() {
+Expr Parser::parseFunc() {
   const Token *tk = expect(Token::Func);
-  auto expr = std::make_unique<Expr>(tk->s, Expr::Func);
+  auto expr = Expr(tk->s, Expr::Func);
   expect(Token::LPar);
   while (tk = eat({Token::Int, Token::Sym, Token::Func})) {
-    std::unique_ptr<Expr> operand;
     switch (tk->type) {
     case Token::Int:
-      operand = std::move(std::make_unique<Expr>(tk->i));
+      expr.operands.emplace_back(tk->i);
       break;
     case Token::Sym:
-      operand = std::move(std::make_unique<Expr>(tk->s, Expr::Sym));
+      expr.operands.emplace_back(tk->s, Expr::Sym);
       break;
     case Token::Func:
       --i;
-      operand = std::move(parseFunc());
+      expr.operands.emplace_back(parseFunc());
       break;
     default:
       UNREACHABLE();
     }
-    expr->operands.emplace_back(std::move(operand));
   }
   expect(Token::RPar);
-  return std::move(expr);
+  return expr;
 }
 
-std::vector<std::unique_ptr<Expr>> Parser::parseArguments() {
-  std::vector<std::unique_ptr<Expr>> args;
+std::vector<Expr> Parser::parseArguments() {
+  std::vector<Expr> args;
 
 #define ADD_ARG_I()                                                            \
   do {                                                                         \
-    args.emplace_back(std::move(std::make_unique<Expr>(tk.i)));                \
+    args.emplace_back(tk.i);                                                   \
     ++i;                                                                       \
   } while (false)
 
 #define ADD_ARG_S(T)                                                           \
   do {                                                                         \
-    args.emplace_back(std::move(std::make_unique<Expr>(tk.s, T)));             \
+    args.emplace_back(tk.s, T);                                                \
     ++i;                                                                       \
   } while (false)
 
@@ -484,7 +482,7 @@ std::vector<std::unique_ptr<Expr>> Parser::parseArguments() {
       ADD_ARG_S(Expr::Sym);
       break;
     case Token::Func:
-      args.emplace_back(std::move(parseFunc()));
+      args.emplace_back(parseFunc());
       break;
     default:
       if (comma)
@@ -531,7 +529,7 @@ std::ostream &operator<<(std::ostream &os, const Expr &expr) {
     os << expr.s;
     break;
   case Expr::Str:
-    os << '"' << escape(expr.s) << '"';
+    os << escape(expr.s);
     break;
   case Expr::Int:
     os << toHexStr(expr.i);
@@ -683,16 +681,31 @@ std::ostream &operator<<(std::ostream &os, const ExprVal &v) {
   return os;
 }
 
-class DriverImpl {
+class AssemblerImpl {
 public:
-  DriverImpl(const DriverOpts &opts) : opts(opts) {}
+  AssemblerImpl(const AssemblerOpts &opts) : opts(opts) {}
 
   void run();
 
 private:
   void handleDirective(std::unique_ptr<Statement> stmt);
+  void expandInstr(std::unique_ptr<Statement> stmt);
   void handleInstr(std::unique_ptr<Statement> stmt);
   void handleLabel(std::unique_ptr<Statement> stmt);
+
+  void addInstr(std::unique_ptr<Statement> stmt) {
+    stmt->offset = curSec->offset;
+    curSec->offset += 4;
+    curSec->stmts.emplace_back(std::move(stmt));
+  }
+
+  void addInstr(const std::string &s, const std::vector<Expr> &arguments) {
+    std::unique_ptr<Statement> stmt = std::make_unique<Statement>();
+    stmt->type = Statement::Instr;
+    stmt->s = s;
+    stmt->arguments = arguments;
+    addInstr(std::move(stmt));
+  }
 
   template <typename T> void handleDirectiveD(std::unique_ptr<Statement> stmt);
   void handleDirectiveAscii(std::unique_ptr<Statement> stmt);
@@ -730,7 +743,7 @@ private:
 
   std::list<std::unique_ptr<Statement>> delayedStmts;
 
-  const DriverOpts opts;
+  const AssemblerOpts opts;
 };
 
 #define CHECK_CURRENT_SECTION()                                                \
@@ -747,9 +760,9 @@ private:
 
 #define CHECK_ARGUMENT_TYPE(i, type)                                           \
   do {                                                                         \
-    if (stmt->arguments[i]->type != type)                                      \
+    if (stmt->arguments[i].type != type)                                       \
       THROW(AssemblyError, toString(type) + " expected", i,                    \
-            *stmt->arguments[i]);                                              \
+            stmt->arguments[i]);                                               \
   } while (false)
 
 #define CHECK_OPERANDS_SIZE(n)                                                 \
@@ -764,23 +777,20 @@ private:
       THROW(AssemblyError, "duplicated symbol", name);                         \
   } while (false)
 
-#define INVALID_STATEMENT()                                                    \
-  do {                                                                         \
-    THROW(AssemblyError, "invalid statement", *stmt);                          \
-  } while (false)
+#define INVALID_STATEMENT() THROW(AssemblyError, "invalid statement", *stmt)
 
-ExprVal DriverImpl::evalFunc(const Expr &expr) {
+ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
   const std::string &name = expr.s;
   if (name == "-") {
     if (expr.operands.size() == 1) {
-      ExprVal v = evalExpr(*expr.operands[0]);
+      ExprVal v = evalExpr(expr.operands[0]);
       if (v.isInt())
         return ExprVal(-v.getI());
       return ExprVal();
     } else {
       CHECK_OPERANDS_SIZE(2);
-      ExprVal v0 = evalExpr(*expr.operands[0]);
-      ExprVal v1 = evalExpr(*expr.operands[1]);
+      ExprVal v0 = evalExpr(expr.operands[0]);
+      ExprVal v1 = evalExpr(expr.operands[1]);
       if (!v0.isValid() || !v1.isValid())
         return ExprVal();
       if (v0.isSym() && v1.isSym()) {
@@ -796,8 +806,8 @@ ExprVal DriverImpl::evalFunc(const Expr &expr) {
     }
   } else if (name == "+") {
     CHECK_OPERANDS_SIZE(2);
-    ExprVal v0 = evalExpr(*expr.operands[0]);
-    ExprVal v1 = evalExpr(*expr.operands[1]);
+    ExprVal v0 = evalExpr(expr.operands[0]);
+    ExprVal v1 = evalExpr(expr.operands[1]);
     if (v0.isInt() && v1.isInt())
       return ExprVal(v0.getI() + v1.getI());
     if (v0.isInt() && v1.isSym())
@@ -810,7 +820,7 @@ ExprVal DriverImpl::evalFunc(const Expr &expr) {
   }
 }
 
-ExprVal DriverImpl::evalExpr(const Expr &expr) {
+ExprVal AssemblerImpl::evalExpr(const Expr &expr) {
   switch (expr.type) {
   case Expr::Reg:
   case Expr::Str:
@@ -827,7 +837,7 @@ ExprVal DriverImpl::evalExpr(const Expr &expr) {
     }
 
     if (Lexer::isDec(expr.s[0])) {
-      assert(expr.s.size() == 2 && Lexer::isOneOf(expr.s[1], "bf"));
+      assert(expr.s.size() == 2 && isOneOf(expr.s[1], "bf"));
       if (!curSec)
         return ExprVal();
       const Statement *stmt = curSec->findLabel(expr.s);
@@ -850,7 +860,7 @@ ExprVal DriverImpl::evalExpr(const Expr &expr) {
   }
 }
 
-void DriverImpl::run() {
+void AssemblerImpl::run() {
   std::vector<std::string> lines;
   {
     std::fstream ifs(opts.inFile, std::ios::in | std::ios::binary);
@@ -870,9 +880,7 @@ void DriverImpl::run() {
       break;
     case Statement::Instr:
       checkCurSecName({".text"});
-      stmt->offset = curSec->offset;
-      curSec->offset += 4;
-      curSec->stmts.emplace_back(std::move(stmt));
+      expandInstr(std::move(stmt));
       break;
     case Statement::Label:
       handleLabel(std::move(stmt));
@@ -890,45 +898,169 @@ void DriverImpl::run() {
   saveToFile();
 }
 
-void DriverImpl::setSymbolBind(const std::string &name, unsigned char bind) {
+void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
+  const std::string &name = stmt->s;
+
+  std::string format;
+  for (const auto &expr : stmt->arguments)
+    format.push_back(expr.type == Expr::Reg ? 'r' : 'i');
+
+  if (isOneOf(name, {"ecall", "ebreak"}) && format == "") {
+    addInstr("ecb", {Expr(name == "ecall" ? 0 : 1)});
+  } else if (name == "li" && format == "ri") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("lui", {e0, Expr("hi", {e1})});
+    addInstr("addi", {e0, e0, Expr("lo", {e1})});
+  } else if (isOneOf(name, {"lb", "lh", "lw", "lbu", "lhu", "lwu"}) &&
+             format == "ri") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("lui", {e0, Expr("hi", {e1})});
+    addInstr(name, {e0, e0, Expr("lo", {e1})});
+  } else if (isOneOf(name, {"sb", "sh", "sw", "sbu", "shu", "swu"}) &&
+             format == "rri") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    const Expr &e2 = stmt->arguments[2];
+    addInstr("lui", {e1, Expr("hi", {e2})});
+    addInstr(name, {e0, e1, Expr("lo", {e2})});
+  } else if (name == "nop" && format == "") {
+    addInstr("addi", {Expr("x0", Expr::Reg), Expr("x0", Expr::Reg), Expr(0)});
+  } else if (name == "mv" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("addi", {e0, e1, Expr(0)});
+  } else if (name == "not" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("xori", {e0, e1, Expr(-1)});
+  } else if (name == "neg" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("sub", {e0, Expr("x0", Expr::Reg), e1});
+  } else if (name == "sext.b" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("slli", {e0, e1, Expr(24)});
+    addInstr("srai", {e0, e1, Expr(24)});
+  } else if (name == "sext.h" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("slli", {e0, e1, Expr(16)});
+    addInstr("srai", {e0, e1, Expr(16)});
+  } else if (name == "zext.b" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("andi", {e0, e1, Expr(255)});
+  } else if (name == "zext.b" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("slli", {e0, e1, 16});
+    addInstr("srli", {e0, e1, 16});
+  } else if (name == "seqz" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("sltiu", {e0, e1, Expr(1)});
+  } else if (name == "snez" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("sltu", {e0, Expr("x0", Expr::Reg), e1});
+  } else if (name == "sltz" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("slt", {e0, e1, Expr("x0", Expr::Reg)});
+  } else if (name == "sgtz" && format == "rr") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr("slt", {e0, Expr("x0", Expr::Reg), e1});
+  } else if (isOneOf(name, {"beqz", "bnez", "bgez", "bltz"}) &&
+             format == "ri") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    addInstr(substr(name, -1), {e0, Expr("x0", Expr::Reg), e1});
+  } else if (isOneOf(name, {"blez", "bgtz"}) && format == "ri") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    std::string s = substr(name, 0, -1);
+    s[1] = s[1] == 'l' ? 'g' : 'l';
+    addInstr(s, {Expr("x0", Expr::Reg), e0, e1});
+  } else if (isOneOf(name, {"bgt", "ble", "bgtu", "bleu"}) && format == "rri") {
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
+    const Expr &e2 = stmt->arguments[2];
+    std::string s = name;
+    s[1] = s[1] == 'l' ? 'g' : 'l';
+    addInstr(s, {e1, e0, e2});
+  } else if (name == "j" && format == "i") {
+    const Expr &e0 = stmt->arguments[0];
+    addInstr("jal", {Expr("x0", Expr::Reg), e0});
+  } else if (name == "jal" && format == "i") {
+    const Expr &e0 = stmt->arguments[0];
+    addInstr("jal", {Expr("x1", Expr::Reg), e0});
+  } else if (name == "jr" && format == "r") {
+    const Expr &e0 = stmt->arguments[0];
+    addInstr("jalr", {Expr("x0", Expr::Reg), e0, Expr(0)});
+  } else if (name == "jalr" && format == "r") {
+    const Expr &e0 = stmt->arguments[0];
+    addInstr("jalr", {Expr("x1", Expr::Reg), e0, Expr(0)});
+  } else if (name == "ret" && format == "") {
+    addInstr("jalr", {Expr("x0", Expr::Reg), Expr("x1", Expr::Reg), Expr(0)});
+  } else if (name == "call" && format == "i") {
+    const Expr &e0 = stmt->arguments[0];
+    addInstr("lui", {Expr("x1", Expr::Reg), Expr("hi", {e0})});
+    addInstr("jalr",
+             {Expr("x1", Expr::Reg), Expr("x1", Expr::Reg), Expr("lo", {e0})});
+  } else if (name == "tail" && format == "i") {
+    const Expr &e0 = stmt->arguments[0];
+    addInstr("lui", {Expr("x6", Expr::Reg), Expr("hi", {e0})});
+    addInstr("jalr",
+             {Expr("x0", Expr::Reg), Expr("x6", Expr::Reg), Expr("lo", {e0})});
+  } else {
+    addInstr(std::move(stmt));
+  }
+}
+
+void AssemblerImpl::setSymbolBind(const std::string &name, unsigned char bind) {
   Symbol *sym = checkSymbol(name);
   sym->sym.bind = bind;
 }
 
-void DriverImpl::setSymbolType(const std::string &name, unsigned char type) {
+void AssemblerImpl::setSymbolType(const std::string &name, unsigned char type) {
   Symbol *sym = checkSymbol(name);
   sym->sym.type = type;
 }
 
-void DriverImpl::setSymbolSize(const std::string &name, elf::Elf_Xword size) {
+void AssemblerImpl::setSymbolSize(const std::string &name,
+                                  elf::Elf_Xword size) {
   Symbol *sym = checkSymbol(name);
   sym->sym.size = size;
 }
 
-void DriverImpl::handleDelayedStmts() {
+void AssemblerImpl::handleDelayedStmts() {
   curSec = nullptr;
   for (std::unique_ptr<Statement> &stmt : delayedStmts) {
     const std::string &name = stmt->s;
     if (name == ".global") {
-      setSymbolBind(stmt->arguments[0]->s, elf::STB_GLOBAL);
+      setSymbolBind(stmt->arguments[0].s, elf::STB_GLOBAL);
     } else if (name == ".local") {
-      setSymbolBind(stmt->arguments[0]->s, elf::STB_LOCAL);
+      setSymbolBind(stmt->arguments[0].s, elf::STB_LOCAL);
     } else if (name == ".weak") {
-      setSymbolBind(stmt->arguments[0]->s, elf::STB_WEAK);
+      setSymbolBind(stmt->arguments[0].s, elf::STB_WEAK);
     } else if (name == ".type") {
-      const Expr &e0 = *stmt->arguments[0];
-      const Expr &e1 = *stmt->arguments[1];
+      const Expr &e0 = stmt->arguments[0];
+      const Expr &e1 = stmt->arguments[1];
       setSymbolType(e0.s, e1.s == "function" ? elf::STT_FUNC : elf::STT_OBJECT);
     } else if (name == ".size") {
-      const Expr &e0 = *stmt->arguments[0];
-      const Expr &e1 = *stmt->arguments[1];
+      const Expr &e0 = stmt->arguments[0];
+      const Expr &e1 = stmt->arguments[1];
       ExprVal v1 = evalExpr(e1);
       if (!v1.isInt() || v1.getI() < 0)
         INVALID_STATEMENT();
       setSymbolSize(e0.s, v1.getI());
     } else if (name == ".equ") {
-      const Expr &e0 = *stmt->arguments[0];
-      const Expr &e1 = *stmt->arguments[1];
+      const Expr &e0 = stmt->arguments[0];
+      const Expr &e1 = stmt->arguments[1];
 
       CHECK_DUPLICATED_SYMBOL(e0.s);
 
@@ -950,32 +1082,31 @@ void DriverImpl::handleDelayedStmts() {
   }
 }
 
-void DriverImpl::handleInstr(std::unique_ptr<Statement> stmt) {
-}
+void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {}
 
 template <typename T>
-void DriverImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
+void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
   if (curSec->name == ".bss")
     return;
   for (const auto &expr : stmt->arguments) {
-    ExprVal v = evalExpr(*expr);
+    ExprVal v = evalExpr(expr);
     if (!v.isInt())
       INVALID_STATEMENT();
     curSec->bb.appendInt(static_cast<T>(v.getI()));
   }
 }
 
-void DriverImpl::handleDirectiveAscii(std::unique_ptr<Statement> stmt) {
+void AssemblerImpl::handleDirectiveAscii(std::unique_ptr<Statement> stmt) {
   if (curSec->name == ".bss")
     return;
   for (const auto &expr : stmt->arguments) {
-    curSec->bb.append(expr->s);
+    curSec->bb.append(expr.s);
     if (stmt->s == ".asciz")
       curSec->bb.append('\0');
   }
 }
 
-void DriverImpl::cookSections() {
+void AssemblerImpl::cookSections() {
   for (Section *sec : sections) {
     curSec = sec;
     for (std::unique_ptr<Statement> &stmt : sec->stmts) {
@@ -1000,15 +1131,15 @@ void DriverImpl::cookSections() {
 
           unsigned n = stmt->arguments.size();
 
-          unsigned repeat = evalExpr(*stmt->arguments[0]).getI();
+          unsigned repeat = evalExpr(stmt->arguments[0]).getI();
           unsigned size = 1;
           s64 value = 0;
 
           if (n >= 2)
-            size = evalExpr(*stmt->arguments[1]).getI();
+            size = evalExpr(stmt->arguments[1]).getI();
 
           if (n == 3)
-            value = evalExpr(*stmt->arguments[2]).getI();
+            value = evalExpr(stmt->arguments[2]).getI();
 
           for (unsigned i = 0; i < repeat; ++i)
             curSec->bb.append(value, size);
@@ -1017,7 +1148,7 @@ void DriverImpl::cookSections() {
             return;
 
           unsigned repeat =
-              P2ALIGN(stmt->offset, evalExpr(*stmt->arguments[0]).getI()) -
+              P2ALIGN(stmt->offset, evalExpr(stmt->arguments[0]).getI()) -
               stmt->offset;
 
           for (unsigned i = 0; i < repeat; ++i)
@@ -1030,11 +1161,11 @@ void DriverImpl::cookSections() {
   }
 }
 
-void DriverImpl::saveToFile() {
+void AssemblerImpl::saveToFile() {
   // TODO: writer(filename + ".o", elf::ET_REL)
 }
 
-void DriverImpl::checkCurSecName(
+void AssemblerImpl::checkCurSecName(
     const std::initializer_list<std::string> &names) {
   CHECK_CURRENT_SECTION();
   for (const std::string &name : names)
@@ -1044,7 +1175,7 @@ void DriverImpl::checkCurSecName(
         toString(curSec->name));
 }
 
-void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
+void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
   const std::string &name = stmt->s;
   if (name == ".global" || name == ".local" || name == ".weak") {
     CHECK_ARGUMENTS_SIZE(1);
@@ -1057,7 +1188,7 @@ void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
     CHECK_ARGUMENT_TYPE(0, Expr::Sym);
     CHECK_ARGUMENT_TYPE(1, Expr::Str);
 
-    const Expr &e1 = *stmt->arguments[1];
+    const Expr &e1 = stmt->arguments[1];
     if (e1.s != "function" && e1.s != "object")
       THROW(AssemblyError, "symbol type must be function/object", e1.s);
 
@@ -1073,8 +1204,8 @@ void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
   if (name == ".equ") {
     CHECK_ARGUMENTS_SIZE(2);
     CHECK_ARGUMENT_TYPE(0, Expr::Sym);
-    const Expr &e0 = *stmt->arguments[0];
-    const Expr &e1 = *stmt->arguments[1];
+    const Expr &e0 = stmt->arguments[0];
+    const Expr &e1 = stmt->arguments[1];
     if (e0.s == ".")
       THROW(AssemblyError, "can not define .");
     CHECK_DUPLICATED_SYMBOL(e0.s);
@@ -1098,7 +1229,7 @@ void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
   if (name == ".section") {
     CHECK_ARGUMENTS_SIZE(1);
     CHECK_ARGUMENT_TYPE(0, Expr::Str);
-    const std::string &secName = stmt->arguments[0]->s;
+    const std::string &secName = stmt->arguments[0].s;
     Section *sec = getSection(secName);
     if (!sec)
       THROW(AssemblyError, "unknown section", secName);
@@ -1125,7 +1256,7 @@ void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
     unsigned n = 0;
     for (unsigned i = 0; i < stmt->arguments.size(); ++i) {
       CHECK_ARGUMENT_TYPE(i, Expr::Str);
-      n += stmt->arguments[i]->s.size();
+      n += stmt->arguments[i].s.size();
       if (name == ".asciz")
         ++n;
     }
@@ -1140,7 +1271,7 @@ void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
     if (n < 1 || n > 3)
       THROW(AssemblyError, "1/2/3 arguments expected", *stmt);
 
-    ExprVal v0 = evalExpr(*stmt->arguments[0]);
+    ExprVal v0 = evalExpr(stmt->arguments[0]);
     if (!v0.isInt() || v0.getI() < 0)
       INVALID_STATEMENT();
     unsigned repeat = v0.getI();
@@ -1149,7 +1280,7 @@ void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
 
     unsigned size = 1;
     if (n >= 2) {
-      ExprVal v1 = evalExpr(*stmt->arguments[1]);
+      ExprVal v1 = evalExpr(stmt->arguments[1]);
       if (!v1.isInt() || !v1.getI())
         INVALID_STATEMENT();
       size = v1.getI();
@@ -1165,7 +1296,7 @@ void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
   if (name == ".align") {
     CHECK_CURRENT_SECTION();
     CHECK_ARGUMENTS_SIZE(1);
-    ExprVal v = evalExpr(*stmt->arguments[0]);
+    ExprVal v = evalExpr(stmt->arguments[0]);
     if (!v.isInt() || v.getI() > Section::Alignment || v.getI() < 0)
       INVALID_STATEMENT();
     if (v.getI() == 0)
@@ -1179,7 +1310,7 @@ void DriverImpl::handleDirective(std::unique_ptr<Statement> stmt) {
   THROW(AssemblyError, "unknown directive", name);
 }
 
-void DriverImpl::handleLabel(std::unique_ptr<Statement> stmt) {
+void AssemblerImpl::handleLabel(std::unique_ptr<Statement> stmt) {
   CHECK_CURRENT_SECTION();
 
   stmt->offset = curSec->offset;
@@ -1199,27 +1330,27 @@ void DriverImpl::handleLabel(std::unique_ptr<Statement> stmt) {
     sym->sym.bind = elf::STB_GLOBAL;
 }
 
-Section *DriverImpl::getSection(const std::string &name) {
+Section *AssemblerImpl::getSection(const std::string &name) {
   for (Section *sec : sections)
     if (sec->name == name)
       return sec;
   return nullptr;
 }
 
-Symbol *DriverImpl::getSymbol(const std::string &name) {
+Symbol *AssemblerImpl::getSymbol(const std::string &name) {
   if (symTab.count(name))
     return symTab[name].get();
   return nullptr;
 }
 
-Symbol *DriverImpl::checkSymbol(const std::string &name) {
+Symbol *AssemblerImpl::checkSymbol(const std::string &name) {
   Symbol *sym = getSymbol(name);
   if (!sym)
     THROW(AssemblyError, "symbol does not exist", name);
   return sym;
 }
 
-Symbol *DriverImpl::addSymbol(const std::string &name) {
+Symbol *AssemblerImpl::addSymbol(const std::string &name) {
   assert(!symTab.count(name) && name != ".");
   symTab[name].reset(new Symbol(name));
   return symTab[name].get();
@@ -1232,6 +1363,6 @@ Symbol *DriverImpl::addSymbol(const std::string &name) {
 #undef CHECK_ARGUMENTS_SIZE
 #undef CHECK_CURRENT_SECTION
 
-void Driver::run() { DriverImpl(opts).run(); }
+void Assembler::run() { AssemblerImpl(opts).run(); }
 
 } // namespace assembly

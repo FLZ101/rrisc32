@@ -4,55 +4,33 @@
 
 namespace rrisc32 {
 
-enum class Reg {
-  x0,
-  x1,
-  x2,
-  x3,
-  x4,
-  x5,
-  x6,
-  x7,
-  x8,
-  x9,
-  x10,
-  x11,
-  x12,
-  x13,
-  x14,
-  x15,
-  x16,
-  x17,
-  x18,
-  x19,
-  x20,
-  x21,
-  x22,
-  x23,
-  x24,
-  x25,
-  x26,
-  x27,
-  x28,
-  x29,
-  x30,
-  x31
-};
+// clang-format off
+const std::string reg2Name[] = {
+    "zero", "ra", "sp",  "gp",  "tp", "t0", "t1", "t2",
+    "s0",   "s1", "a0",  "a1",  "a2", "a3", "a4", "a5",
+    "a6",   "a7", "s2",  "s3",  "s4", "s5", "s6", "s7",
+    "s8",   "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
+// clang-format on
 
-const std::string regNames[] = {
-    "zero", "ra", "sp", "gp", "tp",  "t0",  "t1", "t2", "s0", "s1", "a0",
-    "a1",   "a2", "a3", "a4", "a5",  "a6",  "a7", "s2", "s3", "s4", "s5",
-    "s6",   "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
-
-std::map<std::string, unsigned> name2Reg;
+std::map<std::string, u32> name2Reg;
 
 void initRegisterInfo() {
-  for (unsigned i = 0; i < 32; ++i) {
-    name2Reg[regNames[i]] = i;
-    if (regNames[i] == "s0")
+  for (u32 i = 0; i < 31; ++i) {
+    name2Reg["x" + toString(i)] = i;
+    name2Reg[reg2Name[i]] = i;
+    if (reg2Name[i] == "s0")
       name2Reg["fp"] = i;
   }
 }
+
+u32 getReg(const std::string &name) {
+  if (name2Reg.count(name))
+    return name2Reg[name];
+  UNKNOWN_REGISTER();
+}
+
+// Except for the 5-bit immediates used in CSR instructions, immediates are
+// always sign-extended.
 
 const InstrDesc instrDescs[] = {
     InstrDesc(InstrType::R, 0b0110011, 0x0, 0x00, "add",
@@ -251,52 +229,6 @@ const InstrDesc instrDescs[] = {
                 m.wr(rd, m.rr(rs1) % m.rr(rs2));
               })};
 
-const PseudoInstrDesc pseudoInstrDescs[] = {
-    {std::regex("(ecall|ebreak)"),
-     [](const AsmInstr &ai, std::list<Instr> &li) {
-       if (ai.getFormat() != "")
-         return false;
-       assembleInstr(
-           AsmInstr("ecb", {(ai.getName() == "ecall") ? 0 : u32(1)}, "i"), li);
-       return true;
-     }},
-    {std::regex("la"),
-     [](const AsmInstr &ai, std::list<Instr> &li) {
-       if (ai.getFormat() != "ri")
-         return false;
-       u32 rd = ai.getOperand(0);
-       u32 imm = ai.getOperand(1);
-       assembleInstr(AsmInstr("auipc", {rd, imm >> 12 << 12}, "ri"), li);
-       assembleInstr(AsmInstr("addi", {rd, imm & 0xfff}, "ri"), li);
-       return true;
-     }},
-    {std::regex("l[bhw]"),
-     [](const AsmInstr &ai, std::list<Instr> &li) {
-       if (ai.getFormat() != "ri")
-         return false;
-       u32 rd = ai.getOperand(0);
-       u32 imm = ai.getOperand(1);
-       assembleInstr(AsmInstr("auipc", {rd, imm >> 12 << 12}, "ri"), li);
-       assembleInstr(AsmInstr(ai.getName(), {rd, rd, imm & 0xfff}, "rri"), li);
-       return true;
-     }},
-};
-
-std::map<std::string, const InstrDesc *> name2InstrDesc;
-
-void initInstructionInfo() {
-  for (auto &desc : instrDescs) {
-    assert(name2InstrDesc.count(desc.name) == 0);
-    name2InstrDesc[desc.name] = &desc;
-  }
-}
-
-u32 getReg(std::string name) {
-  if (name2Reg.count(name))
-    return name2Reg[name];
-  THROW(UnknownRegister, name);
-}
-
 u32 encodeInstr(const Instr &inst) {
   u32 b = 0;
 
@@ -383,7 +315,7 @@ void decodeInstr(u32 b, Instr &inst) {
     break;
 
   default:
-    THROW(IllegalInstruction);
+    UNKNOWN_INSTRUCTION();
   }
 
   for (const InstrDesc &desc : instrDescs) {
@@ -396,91 +328,23 @@ void decodeInstr(u32 b, Instr &inst) {
       return;
     }
   }
-  THROW(IllegalInstruction);
+  UNKNOWN_INSTRUCTION();
 }
 
-void assembleInstr(const AsmInstr &ai, std::list<Instr> &li) {
-  for (auto &desc : pseudoInstrDescs)
-    if (std::regex_match(ai.getName(), desc.namePattern) && desc.expand(ai, li))
-      return;
-  if (!name2InstrDesc.count(ai.getName()))
-    THROW(UnknownInstructionFormat);
+std::map<std::string, const InstrDesc *> name2InstrDesc;
 
-  const InstrDesc *desc = name2InstrDesc[ai.getName()];
-  Instr instr;
-  instr.desc = desc;
-  switch (desc->type) {
-  case InstrType::R:
-    if (ai.getFormat() != "rrr")
-      THROW(UnknownInstructionFormat);
-    instr.rd = ai.getOperand(0);
-    instr.rs1 = ai.getOperand(1);
-    instr.rs2 = ai.getOperand(2);
-    break;
-  case InstrType::I:
-    if (ai.getFormat() != "rri")
-      THROW(UnknownInstructionFormat);
-    instr.rd = ai.getOperand(0);
-    instr.rs1 = ai.getOperand(1);
-    instr.imm = ai.getOperand(2);
-    break;
-  case InstrType::S:
-  case InstrType::B:
-    if (ai.getFormat() != "rri")
-      THROW(UnknownInstructionFormat);
-    instr.rs1 = ai.getOperand(0);
-    instr.rs2 = ai.getOperand(1);
-    instr.imm = ai.getOperand(2);
-    break;
-  case InstrType::U:
-  case InstrType::J:
-    if (ai.getFormat() != "ri")
-      THROW(UnknownInstructionFormat);
-    instr.rd = ai.getOperand(0);
-    instr.imm = ai.getOperand(1);
-    break;
+void initInstructionInfo() {
+  for (auto &desc : instrDescs) {
+    assert(name2InstrDesc.count(desc.name) == 0);
+    name2InstrDesc[desc.name] = &desc;
   }
-  li.push_back(instr);
 }
 
-void disassembleInstr(const std::list<Instr> &li,
-                      std::list<Instr>::const_iterator &it, AsmInstr &ai) {
-  for (auto &desc : pseudoInstrDescs)
-    if (desc.combine(li, it, ai))
-      return;
-
-  std::string name;
-  std::vector<u32> operands;
-  std::string format;
-
-  const InstrDesc *desc = it->desc;
-  name = desc->name;
-  switch (desc->type) {
-  case InstrType::R:
-    operands = {it->rd, it->rs1, it->rs2};
-    format = "rrr";
-    break;
-  case InstrType::I:
-    operands = {it->rd, it->rs1, it->imm};
-    format = "rri";
-    break;
-  case InstrType::S:
-  case InstrType::B:
-    operands = {it->rs1, it->rs2, it->imm};
-    format = "rri";
-    break;
-  case InstrType::U:
-  case InstrType::J:
-    operands = {it->rd, it->imm};
-    format = "ri";
-    break;
-  }
-  ai = AsmInstr(name, operands, format);
-}
-
-void initRRisc32() {
+RRisc32Init::RRisc32Init() {
   initRegisterInfo();
   initInstructionInfo();
 }
+
+static RRisc32Init rrisc32Init;
 
 } // namespace rrisc32

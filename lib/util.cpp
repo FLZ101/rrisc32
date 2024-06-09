@@ -49,8 +49,14 @@ s64 parseInt(const std::string &str, bool hex) {
   return i;
 }
 
-std::string escape(const std::string &s) {
+std::string escape(char c, bool wrap) { return escape(toString(c), wrap); }
+
+std::string escape(const std::string &s, bool wrap) {
   std::string str;
+
+  if (wrap)
+    str.push_back('"');
+
   for (char c : s) {
     switch (c) {
     case '\n':
@@ -78,6 +84,10 @@ std::string escape(const std::string &s) {
       break;
     }
   }
+
+  if (wrap)
+    str.push_back('"');
+
   return str;
 }
 
