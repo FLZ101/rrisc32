@@ -660,16 +660,18 @@ class ExprVal {
 public:
   ExprVal() {}
 
-  explicit ExprVal(s64 i) : i(i), valid(true) {}
-
-  ExprVal(const std::string &name) : name(name), valid(true) {}
+  explicit ExprVal(s64 i) : ExprVal(nullptr, i) {}
 
   ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset), valid(true) {}
 
+  explicit ExprVal(const std::string &name) : name(name), valid(true) {
+    assert(!name.empty());
+  }
+
   bool isValid() const { return valid; }
 
-  bool isInt() const { return valid && !isSym(); }
-  s64 getI() const { return i; }
+  bool isInt() const { return valid && !isSym() && !isUndef(); }
+  s64 getI() const { return offset; }
 
   bool isSym() const { return valid && !!sec; }
   Section *getSec() const { return sec; }
@@ -680,8 +682,6 @@ public:
 
 private:
   bool valid = false;
-
-  s64 i = 0;
 
   Section *sec = nullptr;
   s64 offset = 0;
