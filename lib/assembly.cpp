@@ -1153,13 +1153,15 @@ void AssemblerImpl::cookSections() {
 
           unsigned repeat = evalExpr(stmt->arguments[0]).getI();
           unsigned size = 1;
-          s64 value = 0;
-
           if (n >= 2)
             size = evalExpr(stmt->arguments[1]).getI();
-
-          if (n == 3)
-            value = evalExpr(stmt->arguments[2]).getI();
+          s64 value = 0;
+          if (n == 3) {
+            ExprVal v2 = evalExpr(stmt->arguments[2]);
+            if (!v2.isInt())
+              INVALID_STATEMENT();
+            value = v2.getI();
+          }
 
           for (unsigned i = 0; i < repeat; ++i)
             curSec->bb.append(value, size);
@@ -1300,9 +1302,11 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
     unsigned size = 1;
     if (n >= 2) {
       ExprVal v1 = evalExpr(stmt->arguments[1]);
-      if (!v1.isInt() || !v1.getI())
+      if (!v1.isInt())
         INVALID_STATEMENT();
       size = v1.getI();
+      if (!size)
+        return;
       if (size != 1 && size != 2 && size != 4 && size != 8)
         INVALID_STATEMENT();
     }
