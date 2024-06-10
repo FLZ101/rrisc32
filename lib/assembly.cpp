@@ -122,7 +122,7 @@ void Lexer::tokenize() {
     char c = s[i];
 
 #define UNEXPECTED_CHAR()                                                      \
-  THROW(AssemblyError, "unexpected character", escape(s), i, escape(c))
+  THROW(AssemblyError, "unexpected character", i, escape(c))
 
 #define SKIP_SPACE                                                             \
   if (isSpace(c))                                                              \
@@ -635,6 +635,15 @@ struct Symbol {
       sym.bind = elf::STB_GLOBAL;
   }
 
+  void set(s64 offset) { set(nullptr, offset); }
+
+  void set(Section *sec, s64 offset) {
+    this->sec = sec;
+    this->offset = offset;
+    if (!this->sec)
+      sym.sec = elf::SHN_ABS;
+  }
+
   elf::Symbol sym = {.name = "",
                      .value = 0,
                      .size = 0,
@@ -650,24 +659,34 @@ struct Symbol {
 class ExprVal {
 public:
   ExprVal() {}
+
   explicit ExprVal(s64 i) : i(i), valid(true) {}
+
+  ExprVal(const std::string &name) : name(name), valid(true) {}
+
   ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset), valid(true) {}
 
   bool isValid() const { return valid; }
 
-  bool isInt() const { return valid && !sec; }
+  bool isInt() const { return valid && !isSym(); }
   s64 getI() const { return i; }
 
   bool isSym() const { return valid && !!sec; }
   Section *getSec() const { return sec; }
   s64 getOffset() const { return offset; }
 
+  bool isUndef() const { return valid && !name.empty(); }
+  const std::string &getName() const { return name; }
+
 private:
   bool valid = false;
 
   s64 i = 0;
+
   Section *sec = nullptr;
   s64 offset = 0;
+
+  std::string name;
 };
 
 std::ostream &operator<<(std::ostream &os, const ExprVal &v) {
@@ -722,7 +741,6 @@ private:
   Section *getSection(const std::string &name);
 
   Symbol *getSymbol(const std::string &name);
-  Symbol *checkSymbol(const std::string &name);
   Symbol *addSymbol(const std::string &name);
 
   void setSymbolBind(const std::string &name, unsigned char bind);
@@ -780,19 +798,25 @@ private:
 #define INVALID_STATEMENT() THROW(AssemblyError, "invalid statement", *stmt)
 
 ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
+  std::vector<ExprVal> values;
+  for (const Expr &e : expr.operands) {
+    ExprVal v = evalExpr(e);
+    if (!v.isValid() || v.isUndef())
+      return ExprVal();
+    values.push_back(v);
+  }
+
   const std::string &name = expr.s;
   if (name == "-") {
     if (expr.operands.size() == 1) {
-      ExprVal v = evalExpr(expr.operands[0]);
+      ExprVal v = values[0];
       if (v.isInt())
         return ExprVal(-v.getI());
       return ExprVal();
     } else {
       CHECK_OPERANDS_SIZE(2);
-      ExprVal v0 = evalExpr(expr.operands[0]);
-      ExprVal v1 = evalExpr(expr.operands[1]);
-      if (!v0.isValid() || !v1.isValid())
-        return ExprVal();
+      ExprVal v0 = values[0];
+      ExprVal v1 = values[1];
       if (v0.isSym() && v1.isSym()) {
         if (v0.getSec() == v1.getSec())
           return ExprVal(v0.getOffset() - v1.getOffset());
@@ -806,8 +830,8 @@ ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
     }
   } else if (name == "+") {
     CHECK_OPERANDS_SIZE(2);
-    ExprVal v0 = evalExpr(expr.operands[0]);
-    ExprVal v1 = evalExpr(expr.operands[1]);
+    ExprVal v0 = values[0];
+    ExprVal v1 = values[1];
     if (v0.isInt() && v1.isInt())
       return ExprVal(v0.getI() + v1.getI());
     if (v0.isInt() && v1.isSym())
@@ -846,12 +870,12 @@ ExprVal AssemblerImpl::evalExpr(const Expr &expr) {
       return ExprVal(curSec, stmt->offset);
     }
 
-    Symbol *sym = getSymbol(expr.s);
-    if (!sym)
-      return ExprVal();
-    if (!sym->sec)
+    Symbol *sym = addSymbol(expr.s);
+    if (sym->sec)
+      return ExprVal(sym->sec, sym->offset);
+    if (sym->sym.sec == elf::SHN_ABS)
       return ExprVal(sym->offset);
-    return ExprVal(sym->sec, sym->offset);
+    return ExprVal(expr.s);
   }
   case Expr::Func:
     return evalFunc(expr);
@@ -871,9 +895,8 @@ void AssemblerImpl::run() {
   }
 
   for (unsigned i = 0; i < lines.size(); ++i) {
-    std::unique_ptr<Statement> stmt = std::move(parse(lines[i]));
-
     TRY()
+    std::unique_ptr<Statement> stmt = std::move(parse(lines[i]));
     switch (stmt->type) {
     case Statement::Directive:
       handleDirective(std::move(stmt));
@@ -888,7 +911,7 @@ void AssemblerImpl::run() {
     default:
       UNREACHABLE();
     }
-    RETHROW(AssemblyError, i + 1, lines[i])
+    RETHROW(AssemblyError, i + 1, escape(lines[i]))
   }
 
   handleDelayedStmts();
@@ -1022,18 +1045,18 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
 }
 
 void AssemblerImpl::setSymbolBind(const std::string &name, unsigned char bind) {
-  Symbol *sym = checkSymbol(name);
+  Symbol *sym = addSymbol(name);
   sym->sym.bind = bind;
 }
 
 void AssemblerImpl::setSymbolType(const std::string &name, unsigned char type) {
-  Symbol *sym = checkSymbol(name);
+  Symbol *sym = addSymbol(name);
   sym->sym.type = type;
 }
 
 void AssemblerImpl::setSymbolSize(const std::string &name,
                                   elf::Elf_Xword size) {
-  Symbol *sym = checkSymbol(name);
+  Symbol *sym = addSymbol(name);
   sym->sym.size = size;
 }
 
@@ -1062,19 +1085,16 @@ void AssemblerImpl::handleDelayedStmts() {
       const Expr &e0 = stmt->arguments[0];
       const Expr &e1 = stmt->arguments[1];
 
-      CHECK_DUPLICATED_SYMBOL(e0.s);
-
       ExprVal v1 = evalExpr(e1);
-      if (!v1.isValid())
+      if (!v1.isValid() || v1.isUndef())
         INVALID_STATEMENT();
 
       Symbol *sym = addSymbol(e0.s);
       if (v1.isInt()) {
-        sym->offset = v1.getI();
+        sym->set(v1.getI());
       } else {
         assert(v1.isSym());
-        sym->sec = v1.getSec();
-        sym->offset = v1.getOffset();
+        sym->set(v1.getSec(), v1.getOffset());
       }
     } else {
       UNREACHABLE();
@@ -1208,20 +1228,19 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
     const Expr &e1 = stmt->arguments[1];
     if (e0.s == ".")
       THROW(AssemblyError, "can not define .");
-    CHECK_DUPLICATED_SYMBOL(e0.s);
 
     ExprVal v1 = evalExpr(e1);
-    if (!v1.isValid()) {
+    if (!v1.isValid() || v1.isUndef()) {
       delayedStmts.emplace_front(std::move(stmt));
       return;
     }
+
     Symbol *sym = addSymbol(e0.s);
     if (v1.isInt()) {
-      sym->offset = v1.getI();
+      sym->set(v1.getI());
     } else {
       assert(v1.isSym());
-      sym->sec = v1.getSec();
-      sym->offset = v1.getOffset();
+      sym->set(v1.getSec(), v1.getOffset());
     }
     return;
   }
@@ -1324,10 +1343,7 @@ void AssemblerImpl::handleLabel(std::unique_ptr<Statement> stmt) {
   CHECK_DUPLICATED_SYMBOL(name);
 
   Symbol *sym = addSymbol(name);
-  sym->sec = curSec;
-  sym->offset = curSec->offset;
-  if (!name.starts_with(".L"))
-    sym->sym.bind = elf::STB_GLOBAL;
+  sym->set(curSec, curSec->offset);
 }
 
 Section *AssemblerImpl::getSection(const std::string &name) {
@@ -1338,21 +1354,15 @@ Section *AssemblerImpl::getSection(const std::string &name) {
 }
 
 Symbol *AssemblerImpl::getSymbol(const std::string &name) {
-  if (symTab.count(name))
+  if (symTab.contains(name))
     return symTab[name].get();
   return nullptr;
 }
 
-Symbol *AssemblerImpl::checkSymbol(const std::string &name) {
-  Symbol *sym = getSymbol(name);
-  if (!sym)
-    THROW(AssemblyError, "symbol does not exist", name);
-  return sym;
-}
-
 Symbol *AssemblerImpl::addSymbol(const std::string &name) {
-  assert(!symTab.count(name) && name != ".");
-  symTab[name].reset(new Symbol(name));
+  assert(name != ".");
+  if (!symTab.contains(name))
+    symTab[name].reset(new Symbol(name));
   return symTab[name].get();
 }
 

@@ -55,13 +55,13 @@ private:
 #define TRY() try {
 
 #define RETHROW(NAME, ...) \
-  } catch (Exception & ex) { \
+  } catch (Exception &ex) { \
     throw NAME(_MESSAGE(NAME, ##__VA_ARGS__) + "\n" + ex.what()); \
   }
 
 #define CATCH() \
   } catch (Exception &ex) { \
-    std::cerr << "!!! " << ex.what() << "\n"; \
+    std::cerr << ex.what() << "\n"; \
   }
 
 // clang-format on
