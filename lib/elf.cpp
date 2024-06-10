@@ -261,6 +261,18 @@ void Reader::dumpSymbols(std::ostream &os) {
 
 std::string str_relocation_type(Elf_Word type) {
   switch (type) {
+  case R_RRISC32_NONE:
+    return "NONE";
+  case R_RRISC32_32:
+    return "32";
+  case R_RRISC32_CALL:
+    return "CALL";
+  case R_RRISC32_HI20:
+    return "HI20";
+  case R_RRISC32_LO12_I:
+    return "LO12_I";
+  case R_RRISC32_LO12_S:
+    return "LO12_S";
   default:
     return toHexStr(type);
   }

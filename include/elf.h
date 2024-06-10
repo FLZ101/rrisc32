@@ -16,8 +16,15 @@ using namespace ELFIO;
 
 DEFINE_EXCEPTION(ELFError)
 
-const Elf_Half EM_RRISC32 = 0x1234;
-const unsigned char ELFOSABI_RRISC32 = 0x12;
+const Elf_Half EM_RRISC32 = EM_RISCV;
+const unsigned char ELFOSABI_RRISC32 = ELFOSABI_NONE;
+
+const Elf_Word R_RRISC32_NONE = 0;
+const Elf_Word R_RRISC32_32 = 1;
+const Elf_Word R_RRISC32_CALL = 18;
+const Elf_Word R_RRISC32_HI20 = 26;
+const Elf_Word R_RRISC32_LO12_I = 27;
+const Elf_Word R_RRISC32_LO12_S = 28;
 
 struct Symbol {
   std::string name;
