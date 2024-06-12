@@ -1,0 +1,692 @@
+diff --git a/include/elf.h b/include/elf.h
+index 0ce61f8..c080325 100644
+--- a/include/elf.h
++++ b/include/elf.h
+@@ -53,8 +53,8 @@ class Reader {
+ public:
+   using SegFn = std::function<void(segment &)>;
+   using SecFn = std::function<void(section &)>;
+-  using SymFn = std::function<void(Symbol &)>;
+-  using RelFn = std::function<void(Relocation &)>;
++  using SymFn = std::function<void(const Symbol &)>;
++  using RelFn = std::function<void(const Relocation &)>;
+ 
+   Reader(const std::string &filename);
+ 
+@@ -98,11 +98,8 @@ private:
+   void checkSection(const std::string &name, Elf_Word type,
+                     Elf_Xword flags = 0);
+ 
+-  bool checkSectionName(const std::string &name) {
+-    return std::find(secNames.begin(), secNames.end(), name) != secNames.end();
+-  }
+-
+   void checkSymbols();
++  void checkRelocations();
+ 
+   // clang-format off
+   const std::vector<std::string> secNames = {
+@@ -128,22 +125,7 @@ public:
+   section *getSection(const std::string &name);
+   section *addSection(const std::string &name, Elf_Word type, Elf_Xword flags);
+ 
+-  section *getStringTableSec() {
+-    if (!stringTableSec)
+-      stringTableSec = addSection(".symtab", SHT_SYMTAB, 0);
+-    return stringTableSec;
+-  }
+-
+-  section *getSymbolTableSec() {
+-    if (!symbolTableSec)
+-      symbolTableSec = addSection(".strtab", SHT_STRTAB, 0);
+-    return symbolTableSec;
+-  }
+-
+ protected:
+-  section *stringTableSec = nullptr;
+-  section *symbolTableSec = nullptr;
+-
+   std::string filename;
+   elfio ei;
+ };
+@@ -154,7 +136,12 @@ public:
+       : Writer(filename, type, EM_RRISC32, ELFCLASS32, ELFDATA2LSB,
+                ELFOSABI_RRISC32) {}
+ 
+-  section *addSection(const std::string &name);
++  section *getSection(const std::string &name);
++
++  Elf_Word addString(const std::string &s);
++
++private:
++  std::map<std::string, Elf_Word> stringCache;
+ };
+ 
+ } // namespace elf
+diff --git a/include/rrisc32.h b/include/rrisc32.h
+index 4d306b2..7100815 100644
+--- a/include/rrisc32.h
++++ b/include/rrisc32.h
+@@ -4,16 +4,19 @@
+ #include "util.h"
+ 
+ #include <functional>
++#include <string>
++#include <variant>
++#include <vector>
+ 
+ namespace rrisc32 {
+ 
+ DEFINE_EXCEPTION(RRisc32Err)
+ 
+ #define UNKNOWN_INSTRUCTION(...)                                               \
+-  THROW(RRisc32Err, "invalid instruction", ##__VA_ARGS__)
++  THROW(RRisc32Err, "unknown instruction", ##__VA_ARGS__)
+ 
+ #define UNKNOWN_REGISTER(...)                                                  \
+-  THROW(RRisc32Err, "invalid register", ##__VA_ARGS__)
++  THROW(RRisc32Err, "unknown register", ##__VA_ARGS__)
+ 
+ #define ILLEGAL_INSTRUCTION(...)                                               \
+   THROW(RRisc32Err, "illegal instruction", ##__VA_ARGS__)
+@@ -22,6 +25,34 @@ DEFINE_EXCEPTION(RRisc32Err)
+ 
+ #define SEGMENT_FAULT(...) THROW(RRisc32Err, "segment fault", ##__VA_ARGS__)
+ 
++class Machine {
++public:
++  Machine(size_t sz = 32 * 1024 * 1024) : sz(sz) { mem = new u8[sz]; }
++
++  Machine(const Machine &) = delete;
++  Machine &operator=(const Machine &) = delete;
++
++  ~Machine() { delete mem; }
++
++  u32 ri();
++  void wi(u32 value);
++
++  template <typename T = u32> T rr(unsigned i);
++  void wr(unsigned i, u32 value);
++
++  template <typename T = u32> T rm(u32 addr);
++  template <typename T = u32> void wm(u32 addr, T value);
++
++  void ecall();
++  void ebreak();
++
++protected:
++  u32 ip = 0;
++  u32 reg[32] = {};
++  u8 *mem = nullptr;
++  size_t sz = 0;
++};
++
+ namespace Reg {
+ 
+ const u32 x0 = 0;
+@@ -59,12 +90,8 @@ const u32 x31 = 31;
+ 
+ } // namespace Reg
+ 
+-u32 getReg(const std::string &name);
+-
+ enum class InstrType { Invalid, R, I, S, B, U, J };
+ 
+-class Machine;
+-
+ struct InstrDesc {
+ 
+   using exeFn = std::function<void(Machine &, u32, u32, u32, u32)>;
+@@ -82,64 +109,28 @@ struct InstrDesc {
+   const exeFn exe;
+ };
+ 
+-struct Instr {
+-  const InstrDesc *desc = nullptr;
+-  u32 rd = 0, rs1 = 0, rs2 = 0, imm = 0;
+-};
+-
+-u32 encodeInstr(const Instr &inst);
+-
+-void decodeInstr(u32 b, Instr &inst);
++class Instr {
++  friend u32 encode(const Instr &instr);
++  friend void decode(u32 b, Instr &instr, const InstrDesc *&desc);
+ 
+-class Machine {
+ public:
+-  Machine(size_t sz = 32 * 1024 * 1024) : sz(sz) { mem = new u8[sz]; }
+-
+-  Machine(const Machine &) = delete;
+-  Machine &operator=(const Machine &) = delete;
+-
+-  ~Machine() { delete mem; }
++  using Operand = std::variant<std::string, u32>;
+ 
+-  u32 ri() { return ip; }
++  Instr(const std::string &name) : name(name) {}
+ 
+-  void wi(u32 value) { ip = value; }
++  void addOperand(const std::string &s) { operands.push_back(s); }
++  void addOperand(u32 i) { operands.push_back(i); }
+ 
+-  template <typename T = u32> T rr(unsigned i) {
+-    assert(i < 32);
+-    return static_cast<T>(reg[i]);
+-  }
+-
+-  void wr(unsigned i, u32 value) {
+-    assert(i < 32);
+-    reg[i] = value;
+-  }
+-
+-  template <typename T = u32> T rm(u32 addr) {
+-    if (addr + sizeof(T) >= sz)
+-      SEGMENT_FAULT();
+-    return *reinterpret_cast<T *>(mem + addr);
+-  }
+-
+-  template <typename T = u32> void wm(u32 addr, T value) {
+-    if (addr + sizeof(T) >= sz)
+-      SEGMENT_FAULT();
+-    *reinterpret_cast<T *>(mem + addr) = value;
+-  }
+-
+-  void ecall() {}
+-
+-  void ebreak() {}
++  const std::string &getName() { return name; }
++  const std::vector<Operand> &getOperands() { return operands; }
+ 
+ private:
+-  u32 ip = 0;
+-  u32 reg[32] = {};
+-  u8 *mem = nullptr;
+-  size_t sz = 0;
++  std::string name;
++  std::vector<Operand> operands;
+ };
+ 
+-struct RRisc32Init {
+-  RRisc32Init();
+-};
++u32 encode(const Instr &instr);
++void decode(u32 b, Instr &instr, const InstrDesc *&desc);
+ 
+ } // namespace rrisc32
+ #endif
+diff --git a/lib/assembly.cpp b/lib/assembly.cpp
+index 5f27371..2c0736b 100644
+--- a/lib/assembly.cpp
++++ b/lib/assembly.cpp
+@@ -656,6 +656,21 @@ struct Symbol {
+   s64 offset = 0;
+ };
+ 
++struct Relocation {
++  Relocation(Section *sec, s64 offset, Symbol *sym, elf::Elf_Word type,
++             s64 addend = 0)
++      : sec(sec), sym(sym) {
++    rel.offset = offset;
++    rel.type = type;
++    rel.addend = addend;
++  }
++  elf::Relocation rel = {
++      .offset = 0, .sym = 0, .type = elf::R_RRISC32_NONE, .addend = 0};
++
++  Section *sec = nullptr;
++  Symbol *sym = nullptr;
++};
++
+ class ExprVal {
+ public:
+   ExprVal() {}
+@@ -732,6 +747,8 @@ private:
+   void handleDelayedStmts();
+ 
+   void cookSections();
++  void cookSymbols();
++  void cookRelocations();
+ 
+   void saveToFile();
+ 
+@@ -917,6 +934,8 @@ void AssemblerImpl::run() {
+   handleDelayedStmts();
+ 
+   cookSections();
++  cookSymbols();
++  cookRelocations();
+ 
+   saveToFile();
+ }
+@@ -1102,7 +1121,9 @@ void AssemblerImpl::handleDelayedStmts() {
+   }
+ }
+ 
+-void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {}
++void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {
++  const std::string &name = stmt->s;
++}
+ 
+ template <typename T>
+ void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
+@@ -1183,6 +1204,10 @@ void AssemblerImpl::cookSections() {
+   }
+ }
+ 
++void AssemblerImpl::cookSymbols() {}
++
++void AssemblerImpl::cookRelocations() {}
++
+ void AssemblerImpl::saveToFile() {
+   // TODO: writer(filename + ".o", elf::ET_REL)
+ }
+diff --git a/lib/elf.cpp b/lib/elf.cpp
+index ede68a7..c691a31 100644
+--- a/lib/elf.cpp
++++ b/lib/elf.cpp
+@@ -231,7 +231,7 @@ static std::string str_section_idx(Elf_Half idx) {
+ 
+ void Reader::dumpSymbols(std::ostream &os) {
+   bool headerDumped = false;
+-  forEachSymbol([&](Symbol &sym) {
++  forEachSymbol([&](const Symbol &sym) {
+     switch (sym.type) {
+     case STT_OBJECT:
+     case STT_FUNC:
+@@ -274,13 +274,13 @@ std::string str_relocation_type(Elf_Word type) {
+   case R_RRISC32_LO12_S:
+     return "LO12_S";
+   default:
+-    return toHexStr(type);
++    return toHexStr(type, true);
+   }
+ }
+ 
+ void Reader::dumpRelocations(std::ostream &os) {
+   bool headerDumped = false;
+-  forEachRelocation([&](Relocation &rel) {
++  forEachRelocation([&](const Relocation &rel) {
+     if (!headerDumped) {
+       os << "[ Relocations ]\n";
+       os << "SecBT\tIdx\tOffset\tType\tAddend\tSym\tSecSym\tSecRel\n";
+@@ -327,15 +327,10 @@ void RRisc32Reader::check() {
+ 
+   checkSections();
+   checkSymbols();
++  checkRelocations();
+ }
+ 
+ void RRisc32Reader::checkSections() {
+-  forEachSection([this](section &sec) {
+-    std::string name = sec.get_name();
+-    if (!checkSectionName(name))
+-      THROW(ELFError, "unexpected section name", name);
+-  });
+-
+   checkSection(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR);
+   checkSection(".rodata", SHT_PROGBITS, SHF_ALLOC);
+   checkSection(".data", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
+@@ -351,12 +346,11 @@ void RRisc32Reader::checkSections() {
+ 
+ void RRisc32Reader::checkSection(const std::string &name, Elf_Word type,
+                                  Elf_Xword flags) {
+-  assert(checkSectionName(name));
+   auto sec = getSection(name);
+   if (!sec)
+     return;
+   if (sec->get_type() != type)
+-    THROW(ELFError, "unexpected section flags", name,
++    THROW(ELFError, "unexpected section type", name,
+           dump::str_section_type(type));
+   if (sec->get_flags() != flags)
+     THROW(ELFError, "unexpected section flags", name,
+@@ -365,12 +359,28 @@ void RRisc32Reader::checkSection(const std::string &name, Elf_Word type,
+ 
+ void RRisc32Reader::checkSymbols() {
+   forEachSymbol([](const Symbol &sym) {
+-    if (ELF_ST_VISIBILITY(sym.other) == STV_DEFAULT)
++    if (ELF_ST_VISIBILITY(sym.other) != STV_DEFAULT)
+       THROW(ELFError, "unexpected symbol visibility", sym.name,
+             toHexStr(sym.other));
+   });
+ }
+ 
++void RRisc32Reader::checkRelocations() {
++  forEachRelocation([](const Relocation &rel) {
++    switch (rel.type) {
++    case R_RRISC32_NONE:
++    case R_RRISC32_32:
++    case R_RRISC32_CALL:
++    case R_RRISC32_HI20:
++    case R_RRISC32_LO12_I:
++    case R_RRISC32_LO12_S:
++      break;
++    default:
++      THROW(ELFError, "unexpected relocation type", toHexStr(rel.type));
++    }
++  });
++}
++
+ Writer::Writer(const std::string &filename, Elf_Half type, Elf_Half machine,
+                unsigned char cls, unsigned char enc, unsigned char oa)
+     : filename(filename) {
+@@ -399,20 +409,46 @@ section *Writer::addSection(const std::string &name, Elf_Word type,
+   return sec;
+ }
+ 
+-section *RRisc32Writer::addSection(const std::string &name) {
++section *RRisc32Writer::getSection(const std::string &name) {
++  section *sec = Writer::getSection(name);
++  if (sec)
++    return sec;
++
+   if (name == ".text")
+-    return Writer::addSection(name, SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR);
+-  else if (name == ".rodata")
+-    return Writer::addSection(name, SHT_PROGBITS, SHF_ALLOC);
+-  else if (name == ".data")
+-    return Writer::addSection(name, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
+-  else if (name == ".bss")
+-    return Writer::addSection(name, SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
+-  else if (name == ".rela.text" || name == ".rela.rodata" ||
+-           name == ".rela.data" || name == ".rela.bss")
+-    return Writer::addSection(name, SHT_RELA, 0);
+-  else
+-    THROW(ELFError, "addSection", "unexpected section name", name);
++    return addSection(name, SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR);
++  if (name == ".rodata")
++    return addSection(name, SHT_PROGBITS, SHF_ALLOC);
++  if (name == ".data")
++    return addSection(name, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
++  if (name == ".bss")
++    return addSection(name, SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
++
++  if (name == ".rela.text" || name == ".rela.rodata" || name == ".rela.data" ||
++      name == ".rela.bss") {
++    sec = addSection(name, SHT_RELA, 0);
++    if (ei.get_type() == ET_REL) {
++      sec->set_info(getSection(substr(name, 5))->get_index());
++      sec->set_flags(sec->get_flags() & SHF_INFO_LINK);
++    }
++    sec->set_link(getSection(".symtab")->get_index());
++    return sec;
++  }
++
++  if (name == ".symtab") {
++    sec = addSection(name, SHT_SYMTAB, 0);
++    sec->set_link(getSection(".strtab")->get_index());
++    return sec;
++  }
++  if (name == ".strtab")
++    return addSection(name, SHT_STRTAB, 0);
++  THROW(ELFError, "unexpected section name", name);
++}
++
++Elf_Word RRisc32Writer::addString(const std::string &s) {
++  if (!stringCache.contains(s))
++    stringCache[s] =
++        string_section_accessor(getSection(".strtab")).add_string(s);
++  return stringCache[s];
+ }
+ 
+ } // namespace elf
+diff --git a/lib/rrisc32.cpp b/lib/rrisc32.cpp
+index fc157bf..0d734f2 100644
+--- a/lib/rrisc32.cpp
++++ b/lib/rrisc32.cpp
+@@ -23,10 +23,16 @@ void initRegisterInfo() {
+   }
+ }
+ 
++const std::string &getRegName(u32 i) {
++  if (i < 32)
++    return reg2Name[i];
++  UNKNOWN_REGISTER(i);
++}
++
+ u32 getReg(const std::string &name) {
+   if (name2Reg.count(name))
+     return name2Reg[name];
+-  UNKNOWN_REGISTER();
++  UNKNOWN_REGISTER(name);
+ }
+ 
+ // Except for the 5-bit immediates used in CSR instructions, immediates are
+@@ -229,13 +235,86 @@ const InstrDesc instrDescs[] = {
+                 m.wr(rd, m.rr(rs1) % m.rr(rs2));
+               })};
+ 
+-u32 encodeInstr(const Instr &inst) {
+-  u32 b = 0;
++std::map<std::string, const InstrDesc *> name2InstrDesc;
+ 
+-  const InstrDesc *desc = inst.desc;
+-  u32 opcode = desc->opcode, funct3 = desc->funct3, funct7 = desc->funct7;
+-  u32 rd = 0, rs1 = 0, rs2 = 0, imm = inst.imm;
++void initInstructionInfo() {
++  for (auto &desc : instrDescs) {
++    assert(!name2InstrDesc.contains(desc.name));
++    name2InstrDesc[desc.name] = &desc;
++  }
++}
++
++const InstrDesc *getInstrDesc(const std::string &name) {
++  if (name2InstrDesc.contains(name))
++    return name2InstrDesc[name];
++  UNKNOWN_INSTRUCTION(name);
++}
++
++const InstrDesc *getInstrDesc(u32 opcode) {
++  for (const InstrDesc &desc : instrDescs)
++    if (desc.opcode == opcode)
++      return &desc;
++  ILLEGAL_INSTRUCTION("opcode:" + toHexStr(opcode));
++}
++
++const InstrDesc *getInstrDesc(u32 opcode, u32 funct3, u32 funct7) {
++  for (const InstrDesc &desc : instrDescs)
++    if (desc.opcode == opcode && desc.funct3 == funct3 && desc.funct7 == funct7)
++      return &desc;
++  ILLEGAL_INSTRUCTION("opcode:" + toHexStr(opcode),
++                      "funct3:" + toHexStr(funct3),
++                      "funct7:" + toHexStr(funct7));
++}
++
++u32 encode(const Instr &instr) {
++  std::string format;
++  for (const auto &operand : instr.operands)
++    format.push_back(std::get_if<std::string>(&operand) ? 'r' : 'i');
++
++  u32 rd = 0, rs1 = 0, rs2 = 0, imm = 0;
++
++#define _REG(i) (getReg(std::get<std::string>(instr.operands[i])))
++#define _IMM(i) (std::get<u32>(instr.operands[i]))
++
++  const InstrDesc *desc = getInstrDesc(instr.name);
++  switch (desc->type) {
++  case InstrType::R:
++    if (format != "rrr")
++      UNKNOWN_INSTRUCTION(instr.name, format);
++    rd = _REG(0);
++    rs1 = _REG(1);
++    rs2 = _REG(2);
++    break;
++  case InstrType::I:
++    if (format != "rr")
++      UNKNOWN_INSTRUCTION(instr.name, format);
++    rd = _REG(0);
++    rs1 = _REG(1);
++    break;
++  case InstrType::S:
++  case InstrType::B:
++    if (format != "rri")
++      UNKNOWN_INSTRUCTION(instr.name, format);
++    rs1 = _REG(0);
++    rs2 = _REG(1);
++    imm = _IMM(2);
++    break;
++  case InstrType::U:
++  case InstrType::J:
++    if (format != "ri")
++      UNKNOWN_INSTRUCTION(instr.name, format);
++    rd = _REG(0);
++    imm = _IMM(1);
++    break;
++  default:
++    UNREACHABLE();
++  }
++
++#undef _IMM
++#undef _REG
+ 
++  u32 opcode = desc->opcode, funct3 = desc->funct3, funct7 = desc->funct7;
++  u32 b = 0;
+   switch (desc->type) {
+   case InstrType::R:
+     b |= funct3 << 12;
+@@ -268,37 +347,36 @@ u32 encodeInstr(const Instr &inst) {
+             (imm >> 19 << 19);
+     b |= imm << 12;
+     break;
++  default:
++    UNREACHABLE();
+   }
+   b |= desc->opcode;
+   return b;
+ }
+ 
+-void decodeInstr(u32 b, Instr &inst) {
++void decode(u32 b, Instr &instr, const InstrDesc *&desc) {
+   u32 opcode = b & 0x7f;
+-  InstrType type = InstrType::Invalid;
+-  for (const InstrDesc &desc : instrDescs)
+-    if (desc.opcode == opcode)
+-      type = desc.type;
++  InstrType type = getInstrDesc(opcode)->type;
+ 
+-  u32 funt3 = 0, funt7 = 0;
++  u32 funct3 = 0, funct7 = 0;
+   u32 rd = 0, rs1 = 0, rs2 = 0, imm = 0;
+   switch (type) {
+   case InstrType::R:
+-    funt3 = b >> 12 & 0b111;
+-    funt7 = b >> 25 & 0x7f;
++    funct3 = b >> 12 & 0b111;
++    funct7 = b >> 25 & 0x7f;
+     rd = b >> 7 & 0b11111;
+     rs1 = b >> 15 & 0b11111;
+     rs2 = b >> 20 & 0b11111;
+     break;
+   case InstrType::I:
+-    funt3 = b >> 12 & 0b111;
++    funct3 = b >> 12 & 0b111;
+     imm = b >> 20 & 0xfff;
+     rd = b >> 7 & 0b11111;
+     rs1 = b >> 15 & 0b11111;
+     break;
+   case InstrType::S:
+   case InstrType::B:
+-    funt3 = b >> 12 & 0b111;
++    funct3 = b >> 12 & 0b111;
+     imm = (b >> 7 & 0b11111) | ((b >> 25 & 0x7f) << 5);
+     rs1 = b >> 15 & 0b11111;
+     rs2 = b >> 20 & 0b11111;
+@@ -315,36 +393,76 @@ void decodeInstr(u32 b, Instr &inst) {
+     break;
+ 
+   default:
+-    UNKNOWN_INSTRUCTION();
++    ILLEGAL_INSTRUCTION(toHexStr(b, false, false));
+   }
+ 
+-  for (const InstrDesc &desc : instrDescs) {
+-    if (desc.opcode == opcode && desc.funct3 == funt3 && desc.funct7 == funt7) {
+-      inst.desc = &desc;
+-      inst.rd = rd;
+-      inst.rs1 = rs1;
+-      inst.rs2 = rs2;
+-      inst.imm = imm;
+-      return;
+-    }
++  desc = getInstrDesc(opcode, funct3, funct7);
++  instr = Instr(desc->name);
++  switch (desc->type) {
++  case InstrType::R:
++    instr.addOperand(getRegName(rd));
++    instr.addOperand(getRegName(rs1));
++    instr.addOperand(getRegName(rs2));
++    break;
++  case InstrType::I:
++    instr.addOperand(getRegName(rd));
++    instr.addOperand(getRegName(rs1));
++    break;
++  case InstrType::S:
++  case InstrType::B:
++    instr.addOperand(getRegName(rs1));
++    instr.addOperand(getRegName(rs2));
++    instr.addOperand(imm);
++    break;
++  case InstrType::U:
++  case InstrType::J:
++    instr.addOperand(getRegName(rd));
++    instr.addOperand(imm);
++    break;
++  default:
++    UNREACHABLE();
+   }
+-  UNKNOWN_INSTRUCTION();
++
++  ILLEGAL_INSTRUCTION(toHexStr(b, false, false));
+ }
+ 
+-std::map<std::string, const InstrDesc *> name2InstrDesc;
++u32 Machine::ri() { return ip; }
+ 
+-void initInstructionInfo() {
+-  for (auto &desc : instrDescs) {
+-    assert(name2InstrDesc.count(desc.name) == 0);
+-    name2InstrDesc[desc.name] = &desc;
+-  }
++void Machine::wi(u32 value) { ip = value; }
++
++template <typename T = u32> T Machine::rr(unsigned i) {
++  assert(i < 32);
++  return static_cast<T>(reg[i]);
+ }
+ 
+-RRisc32Init::RRisc32Init() {
+-  initRegisterInfo();
+-  initInstructionInfo();
++void Machine::wr(unsigned i, u32 value) {
++  assert(i < 32);
++  reg[i] = value;
+ }
+ 
+-static RRisc32Init rrisc32Init;
++template <typename T = u32> T Machine::rm(u32 addr) {
++  if (addr + sizeof(T) >= sz)
++    SEGMENT_FAULT(toHexStr(addr, true, false));
++  return *reinterpret_cast<T *>(mem + addr);
++}
++
++template <typename T = u32> void Machine::wm(u32 addr, T value) {
++  if (addr + sizeof(T) >= sz)
++    SEGMENT_FAULT(toHexStr(addr, true, false));
++  *reinterpret_cast<T *>(mem + addr) = value;
++}
++
++void Machine::ecall() {}
++
++void Machine::ebreak() {}
++
++struct RRisc32Init {
++  RRisc32Init() {
++    initRegisterInfo();
++    initInstructionInfo();
++  }
++};
++
++static RRisc32Init init;
+ 
+ } // namespace rrisc32
