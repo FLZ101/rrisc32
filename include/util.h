@@ -7,6 +7,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 typedef unsigned long u64;
 typedef unsigned int u32;
@@ -173,6 +174,8 @@ s64 parseInt(const std::string &str, bool hex = false);
 std::string escape(char c, bool wrap = true);
 std::string escape(const std::string &s, bool wrap = true);
 std::string unescape(const std::string &s);
+
+std::vector<std::string> split(const std::string &s, const std::string &d);
 
 #define ALIGN(x, n) (((x) + ((n) - 1)) & ~((n) - 1))
 #define P2ALIGN(x, n) ALIGN((x), (2 << (n)))

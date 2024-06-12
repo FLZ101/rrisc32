@@ -34,14 +34,19 @@ std::string trim(const std::string &s) {
 }
 
 s64 parseInt(const std::string &str, bool hex) {
+  if (str.starts_with("-"))
+    return -parseInt(substr(str, 1), hex);
+
   s64 i = 0;
   if (hex) {
     for (char c : str) {
+      assert(('0' <= c && c <= '9') || ('a' <= c && c <= 'f'));
       i *= 16;
       i += ('0' <= c && c <= '9') ? (c - '0') : (c - 'a' + 10);
     }
   } else {
     for (char c : str) {
+      assert('0' <= c && c <= '9');
       i *= 10;
       i += c - '0';
     }
@@ -124,6 +129,21 @@ std::string unescape(const std::string &s) {
     }
   }
   return str;
+}
+
+std::vector<std::string> split(const std::string &s, const std::string &sep) {
+  assert(!sep.empty());
+
+  std::vector<std::string> v;
+  size_t i = 0;
+  while (i < s.size()) {
+    size_t j = s.find(sep, i);
+    if (j == std::string::npos)
+      j = s.size();
+    v.push_back(trim(substr(s, i, j)));
+    i = j + sep.size();
+  }
+  return v;
 }
 
 #ifndef NDEBUG

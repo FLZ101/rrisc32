@@ -231,7 +231,7 @@ static std::string str_section_idx(Elf_Half idx) {
 
 void Reader::dumpSymbols(std::ostream &os) {
   bool headerDumped = false;
-  forEachSymbol([&](Symbol &sym) {
+  forEachSymbol([&](const Symbol &sym) {
     switch (sym.type) {
     case STT_OBJECT:
     case STT_FUNC:
@@ -274,13 +274,13 @@ std::string str_relocation_type(Elf_Word type) {
   case R_RRISC32_LO12_S:
     return "LO12_S";
   default:
-    return toHexStr(type);
+    return toHexStr(type, true);
   }
 }
 
 void Reader::dumpRelocations(std::ostream &os) {
   bool headerDumped = false;
-  forEachRelocation([&](Relocation &rel) {
+  forEachRelocation([&](const Relocation &rel) {
     if (!headerDumped) {
       os << "[ Relocations ]\n";
       os << "SecBT\tIdx\tOffset\tType\tAddend\tSym\tSecSym\tSecRel\n";
@@ -327,15 +327,10 @@ void RRisc32Reader::check() {
 
   checkSections();
   checkSymbols();
+  checkRelocations();
 }
 
 void RRisc32Reader::checkSections() {
-  forEachSection([this](section &sec) {
-    std::string name = sec.get_name();
-    if (!checkSectionName(name))
-      THROW(ELFError, "unexpected section name", name);
-  });
-
   checkSection(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR);
   checkSection(".rodata", SHT_PROGBITS, SHF_ALLOC);
   checkSection(".data", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
@@ -351,12 +346,11 @@ void RRisc32Reader::checkSections() {
 
 void RRisc32Reader::checkSection(const std::string &name, Elf_Word type,
                                  Elf_Xword flags) {
-  assert(checkSectionName(name));
   auto sec = getSection(name);
   if (!sec)
     return;
   if (sec->get_type() != type)
-    THROW(ELFError, "unexpected section flags", name,
+    THROW(ELFError, "unexpected section type", name,
           dump::str_section_type(type));
   if (sec->get_flags() != flags)
     THROW(ELFError, "unexpected section flags", name,
@@ -365,9 +359,25 @@ void RRisc32Reader::checkSection(const std::string &name, Elf_Word type,
 
 void RRisc32Reader::checkSymbols() {
   forEachSymbol([](const Symbol &sym) {
-    if (ELF_ST_VISIBILITY(sym.other) == STV_DEFAULT)
+    if (ELF_ST_VISIBILITY(sym.other) != STV_DEFAULT)
       THROW(ELFError, "unexpected symbol visibility", sym.name,
             toHexStr(sym.other));
+  });
+}
+
+void RRisc32Reader::checkRelocations() {
+  forEachRelocation([](const Relocation &rel) {
+    switch (rel.type) {
+    case R_RRISC32_NONE:
+    case R_RRISC32_32:
+    case R_RRISC32_CALL:
+    case R_RRISC32_HI20:
+    case R_RRISC32_LO12_I:
+    case R_RRISC32_LO12_S:
+      break;
+    default:
+      THROW(ELFError, "unexpected relocation type", toHexStr(rel.type));
+    }
   });
 }
 
@@ -399,20 +409,46 @@ section *Writer::addSection(const std::string &name, Elf_Word type,
   return sec;
 }
 
-section *RRisc32Writer::addSection(const std::string &name) {
+section *RRisc32Writer::getSection(const std::string &name) {
+  section *sec = Writer::getSection(name);
+  if (sec)
+    return sec;
+
   if (name == ".text")
-    return Writer::addSection(name, SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR);
-  else if (name == ".rodata")
-    return Writer::addSection(name, SHT_PROGBITS, SHF_ALLOC);
-  else if (name == ".data")
-    return Writer::addSection(name, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
-  else if (name == ".bss")
-    return Writer::addSection(name, SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
-  else if (name == ".rela.text" || name == ".rela.rodata" ||
-           name == ".rela.data" || name == ".rela.bss")
-    return Writer::addSection(name, SHT_RELA, 0);
-  else
-    THROW(ELFError, "addSection", "unexpected section name", name);
+    return addSection(name, SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR);
+  if (name == ".rodata")
+    return addSection(name, SHT_PROGBITS, SHF_ALLOC);
+  if (name == ".data")
+    return addSection(name, SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
+  if (name == ".bss")
+    return addSection(name, SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
+
+  if (name == ".rela.text" || name == ".rela.rodata" || name == ".rela.data" ||
+      name == ".rela.bss") {
+    sec = addSection(name, SHT_RELA, 0);
+    if (ei.get_type() == ET_REL) {
+      sec->set_info(getSection(substr(name, 5))->get_index());
+      sec->set_flags(sec->get_flags() & SHF_INFO_LINK);
+    }
+    sec->set_link(getSection(".symtab")->get_index());
+    return sec;
+  }
+
+  if (name == ".symtab") {
+    sec = addSection(name, SHT_SYMTAB, 0);
+    sec->set_link(getSection(".strtab")->get_index());
+    return sec;
+  }
+  if (name == ".strtab")
+    return addSection(name, SHT_STRTAB, 0);
+  THROW(ELFError, "unexpected section name", name);
+}
+
+Elf_Word RRisc32Writer::addString(const std::string &s) {
+  if (!stringCache.contains(s))
+    stringCache[s] =
+        string_section_accessor(getSection(".strtab")).add_string(s);
+  return stringCache[s];
 }
 
 } // namespace elf

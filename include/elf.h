@@ -53,8 +53,8 @@ class Reader {
 public:
   using SegFn = std::function<void(segment &)>;
   using SecFn = std::function<void(section &)>;
-  using SymFn = std::function<void(Symbol &)>;
-  using RelFn = std::function<void(Relocation &)>;
+  using SymFn = std::function<void(const Symbol &)>;
+  using RelFn = std::function<void(const Relocation &)>;
 
   Reader(const std::string &filename);
 
@@ -98,11 +98,8 @@ private:
   void checkSection(const std::string &name, Elf_Word type,
                     Elf_Xword flags = 0);
 
-  bool checkSectionName(const std::string &name) {
-    return std::find(secNames.begin(), secNames.end(), name) != secNames.end();
-  }
-
   void checkSymbols();
+  void checkRelocations();
 
   // clang-format off
   const std::vector<std::string> secNames = {
@@ -128,22 +125,7 @@ public:
   section *getSection(const std::string &name);
   section *addSection(const std::string &name, Elf_Word type, Elf_Xword flags);
 
-  section *getStringTableSec() {
-    if (!stringTableSec)
-      stringTableSec = addSection(".symtab", SHT_SYMTAB, 0);
-    return stringTableSec;
-  }
-
-  section *getSymbolTableSec() {
-    if (!symbolTableSec)
-      symbolTableSec = addSection(".strtab", SHT_STRTAB, 0);
-    return symbolTableSec;
-  }
-
 protected:
-  section *stringTableSec = nullptr;
-  section *symbolTableSec = nullptr;
-
   std::string filename;
   elfio ei;
 };
@@ -154,7 +136,12 @@ public:
       : Writer(filename, type, EM_RRISC32, ELFCLASS32, ELFDATA2LSB,
                ELFOSABI_RRISC32) {}
 
-  section *addSection(const std::string &name);
+  section *getSection(const std::string &name);
+
+  Elf_Word addString(const std::string &s);
+
+private:
+  std::map<std::string, Elf_Word> stringCache;
 };
 
 } // namespace elf

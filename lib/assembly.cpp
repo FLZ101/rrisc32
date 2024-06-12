@@ -656,6 +656,21 @@ struct Symbol {
   s64 offset = 0;
 };
 
+struct Relocation {
+  Relocation(Section *sec, s64 offset, Symbol *sym, elf::Elf_Word type,
+             s64 addend = 0)
+      : sec(sec), sym(sym) {
+    rel.offset = offset;
+    rel.type = type;
+    rel.addend = addend;
+  }
+  elf::Relocation rel = {
+      .offset = 0, .sym = 0, .type = elf::R_RRISC32_NONE, .addend = 0};
+
+  Section *sec = nullptr;
+  Symbol *sym = nullptr;
+};
+
 class ExprVal {
 public:
   ExprVal() {}
@@ -732,6 +747,8 @@ private:
   void handleDelayedStmts();
 
   void cookSections();
+  void cookSymbols();
+  void cookRelocations();
 
   void saveToFile();
 
@@ -917,6 +934,8 @@ void AssemblerImpl::run() {
   handleDelayedStmts();
 
   cookSections();
+  cookSymbols();
+  cookRelocations();
 
   saveToFile();
 }
@@ -928,9 +947,8 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
   for (const auto &expr : stmt->arguments)
     format.push_back(expr.type == Expr::Reg ? 'r' : 'i');
 
-  if (isOneOf(name, {"ecall", "ebreak"}) && format == "") {
-    addInstr("ecb", {Expr(name == "ecall" ? 0 : 1)});
-  } else if (name == "li" && format == "ri") {
+  Expr x0 = Expr("x0", Expr::Reg);
+  if (name == "li" && format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     addInstr("lui", {e0, Expr("hi", {e1})});
@@ -949,7 +967,7 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
     addInstr("lui", {e1, Expr("hi", {e2})});
     addInstr(name, {e0, e1, Expr("lo", {e2})});
   } else if (name == "nop" && format == "") {
-    addInstr("addi", {Expr("x0", Expr::Reg), Expr("x0", Expr::Reg), Expr(0)});
+    addInstr("addi", {x0, x0, Expr(0)});
   } else if (name == "mv" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
@@ -961,7 +979,7 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
   } else if (name == "neg" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
-    addInstr("sub", {e0, Expr("x0", Expr::Reg), e1});
+    addInstr("sub", {e0, x0, e1});
   } else if (name == "sext.b" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
@@ -988,26 +1006,26 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
   } else if (name == "snez" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
-    addInstr("sltu", {e0, Expr("x0", Expr::Reg), e1});
+    addInstr("sltu", {e0, x0, e1});
   } else if (name == "sltz" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
-    addInstr("slt", {e0, e1, Expr("x0", Expr::Reg)});
+    addInstr("slt", {e0, e1, x0});
   } else if (name == "sgtz" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
-    addInstr("slt", {e0, Expr("x0", Expr::Reg), e1});
+    addInstr("slt", {e0, x0, e1});
   } else if (isOneOf(name, {"beqz", "bnez", "bgez", "bltz"}) &&
              format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
-    addInstr(substr(name, -1), {e0, Expr("x0", Expr::Reg), e1});
+    addInstr(substr(name, -1), {e0, x0, e1});
   } else if (isOneOf(name, {"blez", "bgtz"}) && format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     std::string s = substr(name, 0, -1);
     s[1] = s[1] == 'l' ? 'g' : 'l';
-    addInstr(s, {Expr("x0", Expr::Reg), e0, e1});
+    addInstr(s, {x0, e0, e1});
   } else if (isOneOf(name, {"bgt", "ble", "bgtu", "bleu"}) && format == "rri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
@@ -1017,18 +1035,18 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
     addInstr(s, {e1, e0, e2});
   } else if (name == "j" && format == "i") {
     const Expr &e0 = stmt->arguments[0];
-    addInstr("jal", {Expr("x0", Expr::Reg), e0});
+    addInstr("jal", {x0, e0});
   } else if (name == "jal" && format == "i") {
     const Expr &e0 = stmt->arguments[0];
     addInstr("jal", {Expr("x1", Expr::Reg), e0});
   } else if (name == "jr" && format == "r") {
     const Expr &e0 = stmt->arguments[0];
-    addInstr("jalr", {Expr("x0", Expr::Reg), e0, Expr(0)});
+    addInstr("jalr", {x0, e0, Expr(0)});
   } else if (name == "jalr" && format == "r") {
     const Expr &e0 = stmt->arguments[0];
     addInstr("jalr", {Expr("x1", Expr::Reg), e0, Expr(0)});
   } else if (name == "ret" && format == "") {
-    addInstr("jalr", {Expr("x0", Expr::Reg), Expr("x1", Expr::Reg), Expr(0)});
+    addInstr("jalr", {x0, Expr("x1", Expr::Reg), Expr(0)});
   } else if (name == "call" && format == "i") {
     const Expr &e0 = stmt->arguments[0];
     addInstr("lui", {Expr("x1", Expr::Reg), Expr("hi", {e0})});
@@ -1037,8 +1055,7 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
   } else if (name == "tail" && format == "i") {
     const Expr &e0 = stmt->arguments[0];
     addInstr("lui", {Expr("x6", Expr::Reg), Expr("hi", {e0})});
-    addInstr("jalr",
-             {Expr("x0", Expr::Reg), Expr("x6", Expr::Reg), Expr("lo", {e0})});
+    addInstr("jalr", {x0, Expr("x6", Expr::Reg), Expr("lo", {e0})});
   } else {
     addInstr(std::move(stmt));
   }
@@ -1102,7 +1119,9 @@ void AssemblerImpl::handleDelayedStmts() {
   }
 }
 
-void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {}
+void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {
+  const std::string &name = stmt->s;
+}
 
 template <typename T>
 void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
@@ -1182,6 +1201,10 @@ void AssemblerImpl::cookSections() {
     }
   }
 }
+
+void AssemblerImpl::cookSymbols() {}
+
+void AssemblerImpl::cookRelocations() {}
 
 void AssemblerImpl::saveToFile() {
   // TODO: writer(filename + ".o", elf::ET_REL)

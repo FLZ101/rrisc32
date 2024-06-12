@@ -4,16 +4,20 @@
 #include "util.h"
 
 #include <functional>
+#include <ostream>
+#include <string>
+#include <variant>
+#include <vector>
 
 namespace rrisc32 {
 
 DEFINE_EXCEPTION(RRisc32Err)
 
 #define UNKNOWN_INSTRUCTION(...)                                               \
-  THROW(RRisc32Err, "invalid instruction", ##__VA_ARGS__)
+  THROW(RRisc32Err, "unknown instruction", ##__VA_ARGS__)
 
 #define UNKNOWN_REGISTER(...)                                                  \
-  THROW(RRisc32Err, "invalid register", ##__VA_ARGS__)
+  THROW(RRisc32Err, "unknown register", ##__VA_ARGS__)
 
 #define ILLEGAL_INSTRUCTION(...)                                               \
   THROW(RRisc32Err, "illegal instruction", ##__VA_ARGS__)
@@ -21,6 +25,34 @@ DEFINE_EXCEPTION(RRisc32Err)
 #define DIVIDED_BY_ZERO(...) THROW(RRisc32Err, "divided by zero", ##__VA_ARGS__)
 
 #define SEGMENT_FAULT(...) THROW(RRisc32Err, "segment fault", ##__VA_ARGS__)
+
+class Machine {
+public:
+  Machine(size_t sz = 32 * 1024 * 1024) : sz(sz) { mem = new u8[sz]; }
+
+  Machine(const Machine &) = delete;
+  Machine &operator=(const Machine &) = delete;
+
+  ~Machine() { delete mem; }
+
+  u32 ri();
+  void wi(u32 value);
+
+  template <typename T = u32> T rr(unsigned i);
+  void wr(unsigned i, u32 value);
+
+  template <typename T = u32> T rm(u32 addr);
+  template <typename T = u32> void wm(u32 addr, T value);
+
+  void ecall();
+  void ebreak();
+
+protected:
+  u32 ip = 0;
+  u32 reg[32] = {};
+  u8 *mem = nullptr;
+  size_t sz = 0;
+};
 
 namespace Reg {
 
@@ -59,11 +91,7 @@ const u32 x31 = 31;
 
 } // namespace Reg
 
-u32 getReg(const std::string &name);
-
 enum class InstrType { Invalid, R, I, S, B, U, J };
-
-class Machine;
 
 struct InstrDesc {
 
@@ -82,64 +110,35 @@ struct InstrDesc {
   const exeFn exe;
 };
 
-struct Instr {
-  const InstrDesc *desc = nullptr;
-  u32 rd = 0, rs1 = 0, rs2 = 0, imm = 0;
-};
+class Instr {
+  friend u32 encode(const Instr &instr);
+  friend void decode(u32 b, Instr &instr, const InstrDesc *&id);
 
-u32 encodeInstr(const Instr &inst);
-
-void decodeInstr(u32 b, Instr &inst);
-
-class Machine {
 public:
-  Machine(size_t sz = 32 * 1024 * 1024) : sz(sz) { mem = new u8[sz]; }
+  using Operand = std::variant<std::string, u32>;
 
-  Machine(const Machine &) = delete;
-  Machine &operator=(const Machine &) = delete;
+  Instr(const std::string &name) : name(name) {}
+  Instr(const std::string &name, const std::vector<Operand> &operands)
+      : name(name), operands(operands) {}
 
-  ~Machine() { delete mem; }
+  void addOperand(const std::string &s) { operands.push_back(s); }
+  void addOperand(u32 i) { operands.push_back(i); }
 
-  u32 ri() { return ip; }
-
-  void wi(u32 value) { ip = value; }
-
-  template <typename T = u32> T rr(unsigned i) {
-    assert(i < 32);
-    return static_cast<T>(reg[i]);
-  }
-
-  void wr(unsigned i, u32 value) {
-    assert(i < 32);
-    reg[i] = value;
-  }
-
-  template <typename T = u32> T rm(u32 addr) {
-    if (addr + sizeof(T) >= sz)
-      SEGMENT_FAULT();
-    return *reinterpret_cast<T *>(mem + addr);
-  }
-
-  template <typename T = u32> void wm(u32 addr, T value) {
-    if (addr + sizeof(T) >= sz)
-      SEGMENT_FAULT();
-    *reinterpret_cast<T *>(mem + addr) = value;
-  }
-
-  void ecall() {}
-
-  void ebreak() {}
+  const std::string &getName() const { return name; }
+  const std::vector<Operand> &getOperands() const { return operands; }
 
 private:
-  u32 ip = 0;
-  u32 reg[32] = {};
-  u8 *mem = nullptr;
-  size_t sz = 0;
+  std::string name;
+  std::vector<Operand> operands;
 };
 
-struct RRisc32Init {
-  RRisc32Init();
-};
+std::ostream &operator<<(std::ostream &os, const Instr &instr);
+
+u32 encode(const Instr &instr);
+u32 encode(const std::string &name,
+           const std::vector<Instr::Operand> &operands);
+
+void decode(u32 b, Instr &instr, const InstrDesc *&desc);
 
 } // namespace rrisc32
 #endif

@@ -23,10 +23,16 @@ void initRegisterInfo() {
   }
 }
 
+const std::string &getRegName(u32 i) {
+  if (i < 32)
+    return reg2Name[i];
+  UNKNOWN_REGISTER(i);
+}
+
 u32 getReg(const std::string &name) {
   if (name2Reg.count(name))
     return name2Reg[name];
-  UNKNOWN_REGISTER();
+  UNKNOWN_REGISTER(name);
 }
 
 // Except for the 5-bit immediates used in CSR instructions, immediates are
@@ -91,14 +97,17 @@ const InstrDesc instrDescs[] = {
               }),
     InstrDesc(InstrType::I, 0b0010011, 0x1, 0x00, "slli",
               [](Machine &m, u32 rd, u32 rs1, u32 rs2, u32 imm) {
+                imm &= 0b11111;
                 m.wr(rd, m.rr(rs1) << imm);
               }),
     InstrDesc(InstrType::I, 0b0010011, 0x5, 0x00, "srli",
               [](Machine &m, u32 rd, u32 rs1, u32 rs2, u32 imm) {
+                imm &= 0b11111;
                 m.wr(rd, m.rr(rs1) >> imm);
               }),
     InstrDesc(InstrType::I, 0b0010011, 0x5, 0x00, "srai",
               [](Machine &m, u32 rd, u32 rs1, u32 rs2, u32 imm) {
+                imm &= 0b11111;
                 m.wr(rd, m.rr<s32>(rs1) >> imm);
               }),
     InstrDesc(InstrType::I, 0b0010011, 0x2, 0x00, "slti",
@@ -189,13 +198,11 @@ const InstrDesc instrDescs[] = {
               [](Machine &m, u32 rd, u32 rs1, u32 rs2, u32 imm) {
                 m.wr(rd, m.ri() - 4 + (imm << 12));
               }),
-    InstrDesc(InstrType::I, 0b1110011, 0x0, 0x00, "ecb",
-              [](Machine &m, u32 rd, u32 rs1, u32 rs2, u32 imm) {
-                if (imm == 0)
-                  m.ecall();
-                else
-                  m.ebreak();
-              }),
+    InstrDesc(InstrType::I, 0b1110011, 0x0, 0x00, "ecall",
+              [](Machine &m, u32 rd, u32 rs1, u32 rs2, u32 imm) { m.ecall(); }),
+    InstrDesc(
+        InstrType::I, 0b1110011, 0x0, 0x00, "ebreak",
+        [](Machine &m, u32 rd, u32 rs1, u32 rs2, u32 imm) { m.ebreak(); }),
     InstrDesc(InstrType::R, 0b0110011, 0x0, 0x01, "mul",
               [](Machine &m, u32 rd, u32 rs1, u32 rs2, u32 imm) {
                 m.wr(rd, m.rr(rs1) * m.rr(rs2));
@@ -229,13 +236,105 @@ const InstrDesc instrDescs[] = {
                 m.wr(rd, m.rr(rs1) % m.rr(rs2));
               })};
 
-u32 encodeInstr(const Instr &inst) {
-  u32 b = 0;
+std::map<std::string, const InstrDesc *> name2InstrDesc;
 
-  const InstrDesc *desc = inst.desc;
+void initInstructionInfo() {
+  for (auto &desc : instrDescs) {
+    assert(!name2InstrDesc.contains(desc.name));
+    name2InstrDesc[desc.name] = &desc;
+  }
+}
+
+const InstrDesc *getInstrDesc(const std::string &name) {
+  if (name2InstrDesc.contains(name))
+    return name2InstrDesc[name];
+  UNKNOWN_INSTRUCTION(name);
+}
+
+std::ostream &operator<<(std::ostream &os, const Instr &instr) {
+  os << instr.getName();
+  bool first = true;
+  for (const auto &operand : instr.getOperands()) {
+    if (first) {
+      os << " ";
+      first = false;
+    } else {
+      os << ", ";
+    }
+
+    if (std::holds_alternative<u32>(operand))
+      os << toHexStr(std::get<u32>(operand), true);
+    else
+      os << std::get<std::string>(operand);
+  }
+  return os;
+}
+
+u32 encode(const Instr &instr) {
+  std::string format;
+  for (const auto &operand : instr.operands)
+    format.push_back(std::get_if<std::string>(&operand) ? 'r' : 'i');
+
+  u32 rd = 0, rs1 = 0, rs2 = 0, imm = 0;
+
+#define _REG(i) (getReg(std::get<std::string>(instr.operands[i])))
+#define _IMM(i) (std::get<u32>(instr.operands[i]))
+
+  const std::string &name = instr.name;
+  const InstrDesc *desc = getInstrDesc(name);
+  switch (desc->type) {
+  case InstrType::R:
+    if (format != "rrr")
+      UNKNOWN_INSTRUCTION(name, format);
+    rd = _REG(0);
+    rs1 = _REG(1);
+    rs2 = _REG(2);
+    break;
+  case InstrType::I:
+    if (isOneOf(name, {"ecall", "ebreak"})) {
+      if (format != "")
+        UNKNOWN_INSTRUCTION(name, format);
+      rd = Reg::x0;
+      rs1 = Reg::x0;
+      imm = name == "ecall" ? 0 : 1;
+      break;
+    }
+
+    if (format != "rri")
+      UNKNOWN_INSTRUCTION(name, format);
+    rd = _REG(0);
+    rs1 = _REG(1);
+    imm = _IMM(2);
+    if (isOneOf(name, {"slli", "srli", "srai"})) {
+      imm &= 0b11111;
+      if (name == "srai")
+        imm |= 0x20 << 5;
+    }
+    break;
+  case InstrType::S:
+  case InstrType::B:
+    if (format != "rri")
+      UNKNOWN_INSTRUCTION(name, format);
+    rs1 = _REG(0);
+    rs2 = _REG(1);
+    imm = _IMM(2);
+    break;
+  case InstrType::U:
+  case InstrType::J:
+    if (format != "ri")
+      UNKNOWN_INSTRUCTION(name, format);
+    rd = _REG(0);
+    imm = _IMM(1);
+    break;
+  default:
+    UNREACHABLE();
+  }
+
+#undef _IMM
+#undef _REG
+
   u32 opcode = desc->opcode, funct3 = desc->funct3, funct7 = desc->funct7;
-  u32 rd = 0, rs1 = 0, rs2 = 0, imm = inst.imm;
-
+  u32 b = 0;
   switch (desc->type) {
   case InstrType::R:
     b |= funct3 << 12;
@@ -268,37 +367,46 @@ u32 encodeInstr(const Instr &inst) {
             (imm >> 19 << 19);
     b |= imm << 12;
     break;
+  default:
+    UNREACHABLE();
   }
   b |= desc->opcode;
   return b;
 }
 
-void decodeInstr(u32 b, Instr &inst) {
+u32 encode(const std::string &name,
+           const std::vector<Instr::Operand> &operands) {
+  return encode(Instr(name, operands));
+}
+
+void decode(u32 b, Instr &instr, const InstrDesc *&id) {
   u32 opcode = b & 0x7f;
   InstrType type = InstrType::Invalid;
   for (const InstrDesc &desc : instrDescs)
-    if (desc.opcode == opcode)
+    if (desc.opcode == opcode) {
       type = desc.type;
+      break;
+    }
 
-  u32 funt3 = 0, funt7 = 0;
+  u32 funct3 = 0, funct7 = 0;
   u32 rd = 0, rs1 = 0, rs2 = 0, imm = 0;
   switch (type) {
   case InstrType::R:
-    funt3 = b >> 12 & 0b111;
-    funt7 = b >> 25 & 0x7f;
+    funct3 = b >> 12 & 0b111;
+    funct7 = b >> 25 & 0x7f;
     rd = b >> 7 & 0b11111;
     rs1 = b >> 15 & 0b11111;
     rs2 = b >> 20 & 0b11111;
     break;
   case InstrType::I:
-    funt3 = b >> 12 & 0b111;
+    funct3 = b >> 12 & 0b111;
     imm = b >> 20 & 0xfff;
     rd = b >> 7 & 0b11111;
     rs1 = b >> 15 & 0b11111;
     break;
   case InstrType::S:
   case InstrType::B:
-    funt3 = b >> 12 & 0b111;
+    funct3 = b >> 12 & 0b111;
     imm = (b >> 7 & 0b11111) | ((b >> 25 & 0x7f) << 5);
     rs1 = b >> 15 & 0b11111;
     rs2 = b >> 20 & 0b11111;
@@ -315,36 +423,109 @@ void decodeInstr(u32 b, Instr &inst) {
     break;
 
   default:
-    UNKNOWN_INSTRUCTION();
+    ILLEGAL_INSTRUCTION(toHexStr(b, false, false));
   }
 
+  id = nullptr;
   for (const InstrDesc &desc : instrDescs) {
-    if (desc.opcode == opcode && desc.funct3 == funt3 && desc.funct7 == funt7) {
-      inst.desc = &desc;
-      inst.rd = rd;
-      inst.rs1 = rs1;
-      inst.rs2 = rs2;
-      inst.imm = imm;
-      return;
+    if (desc.opcode != opcode || desc.funct3 != funct3 || desc.funct7 != funct7)
+      continue;
+
+    auto check = [&desc, imm]() {
+      switch (desc.opcode) {
+      case 0b0010011: {
+        u32 funct7 = (imm >> 5) & 0x7f;
+        if (desc.name == "slli")
+          return funct7 == 0;
+        if (desc.name == "srli")
+          return funct7 == 0;
+        if (desc.name == "srai")
+          return funct7 == 0x20;
+        return true;
+      }
+      case 0b1110011:
+        if (desc.name == "ecall")
+          return imm == 0;
+        if (desc.name == "ebreak")
+          return imm == 1;
+        return false;
+      default:
+        return true;
+      }
+    };
+
+    if (check()) {
+      id = &desc;
+      break;
     }
   }
-  UNKNOWN_INSTRUCTION();
-}
+  if (!id)
+    ILLEGAL_INSTRUCTION(toHexStr(b, false, false));
 
-std::map<std::string, const InstrDesc *> name2InstrDesc;
-
-void initInstructionInfo() {
-  for (auto &desc : instrDescs) {
-    assert(name2InstrDesc.count(desc.name) == 0);
-    name2InstrDesc[desc.name] = &desc;
+  instr = Instr(id->name);
+  switch (id->type) {
+  case InstrType::R:
+    instr.addOperand(getRegName(rd));
+    instr.addOperand(getRegName(rs1));
+    instr.addOperand(getRegName(rs2));
+    break;
+  case InstrType::I:
+    instr.addOperand(getRegName(rd));
+    instr.addOperand(getRegName(rs1));
+    break;
+  case InstrType::S:
+  case InstrType::B:
+    instr.addOperand(getRegName(rs1));
+    instr.addOperand(getRegName(rs2));
+    instr.addOperand(imm);
+    break;
+  case InstrType::U:
+  case InstrType::J:
+    instr.addOperand(getRegName(rd));
+    instr.addOperand(imm);
+    break;
+  default:
+    UNREACHABLE();
   }
 }
 
-RRisc32Init::RRisc32Init() {
-  initRegisterInfo();
-  initInstructionInfo();
+u32 Machine::ri() { return ip; }
+
+void Machine::wi(u32 value) { ip = value; }
+
+template <typename T> T Machine::rr(unsigned i) {
+  assert(i < 32);
+  return static_cast<T>(reg[i]);
 }
 
-static RRisc32Init rrisc32Init;
+void Machine::wr(unsigned i, u32 value) {
+  assert(i < 32);
+  reg[i] = value;
+}
+
+template <typename T> T Machine::rm(u32 addr) {
+  if (addr + sizeof(T) >= sz)
+    SEGMENT_FAULT(toHexStr(addr, true, false));
+  return *reinterpret_cast<T *>(mem + addr);
+}
+
+template <typename T> void Machine::wm(u32 addr, T value) {
+  if (addr + sizeof(T) >= sz)
+    SEGMENT_FAULT(toHexStr(addr, true, false));
+  *reinterpret_cast<T *>(mem + addr) = value;
+}
+
+void Machine::ecall() {}
+
+void Machine::ebreak() {}
+
+struct RRisc32Init {
+  RRisc32Init() {
+    initRegisterInfo();
+    initInstructionInfo();
+  }
+};
+
+static RRisc32Init init;
 
 } // namespace rrisc32
