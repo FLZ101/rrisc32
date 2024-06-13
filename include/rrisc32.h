@@ -28,7 +28,7 @@ DEFINE_EXCEPTION(RRisc32Err)
 
 class Machine {
 public:
-  Machine(size_t sz = 32 * 1024 * 1024) : sz(sz) { mem = new u8[sz]; }
+  Machine(size_t sz = 32 * 1024 * 1024) : sz(sz) { mem = new s8[sz]; }
 
   Machine(const Machine &) = delete;
   Machine &operator=(const Machine &) = delete;
@@ -38,19 +38,19 @@ public:
   u32 ri();
   void wi(u32 value);
 
-  template <typename T = u32> T rr(unsigned i);
-  void wr(unsigned i, u32 value);
+  template <typename T = s32> T rr(unsigned i);
+  void wr(unsigned i, s32 value);
 
-  template <typename T = u32> T rm(u32 addr);
-  template <typename T = u32> void wm(u32 addr, T value);
+  template <typename T = s32> T rm(u32 addr);
+  template <typename T = s32> void wm(u32 addr, T value);
 
   void ecall();
   void ebreak();
 
 protected:
   u32 ip = 0;
-  u32 reg[32] = {};
-  u8 *mem = nullptr;
+  s32 reg[32] = {};
+  s8 *mem = nullptr;
   size_t sz = 0;
 };
 
@@ -115,14 +115,15 @@ class Instr {
   friend void decode(u32 b, Instr &instr, const InstrDesc *&id);
 
 public:
-  using Operand = std::variant<std::string, u32>;
+  using Operand = std::variant<std::string, s32>;
 
+  Instr() {}
   Instr(const std::string &name) : name(name) {}
   Instr(const std::string &name, const std::vector<Operand> &operands)
       : name(name), operands(operands) {}
 
   void addOperand(const std::string &s) { operands.push_back(s); }
-  void addOperand(u32 i) { operands.push_back(i); }
+  void addOperand(s32 i) { operands.push_back(i); }
 
   const std::string &getName() const { return name; }
   const std::vector<Operand> &getOperands() const { return operands; }

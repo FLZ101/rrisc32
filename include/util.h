@@ -241,6 +241,13 @@ private:
   std::string s;
 };
 
+template <typename T, unsigned N> inline T signExt(T x) {
+  struct {
+    T x : N;
+  } s;
+  return s.x = x;
+}
+
 #ifndef NDEBUG
 extern std::string debugType;
 
