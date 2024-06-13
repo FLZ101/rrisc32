@@ -164,8 +164,8 @@ std::string toHexStr(T x, bool ox = false, bool smart = true) {
   return os.str();
 }
 
-std::string substr(const std::string &s, int i);
-std::string substr(const std::string &s, int i, int j);
+std::string substr(const std::string &s, ssize_t i);
+std::string substr(const std::string &s, ssize_t i, ssize_t j);
 
 std::string trim(const std::string &s);
 
@@ -175,7 +175,9 @@ std::string escape(char c, bool wrap = true);
 std::string escape(const std::string &s, bool wrap = true);
 std::string unescape(const std::string &s);
 
-std::vector<std::string> split(const std::string &s, const std::string &d);
+size_t find(const std::string &s, const std::string &t, size_t pos = 0);
+
+std::vector<std::string> split(const std::string &s, const std::string &sep);
 
 #define ALIGN(x, n) (((x) + ((n) - 1)) & ~((n) - 1))
 #define P2ALIGN(x, n) ALIGN((x), (2 << (n)))

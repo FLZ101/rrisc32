@@ -352,8 +352,10 @@ u32 encode(const Instr &instr) {
   case InstrType::S:
   case InstrType::B:
     b |= funct3 << 12;
-    if (desc->type == InstrType::B)
+    if (desc->type == InstrType::B) {
+      imm >>= 1;
       imm = (imm >> 10 & 1) | ((imm & 0x3ff) << 1) | (imm >> 11 << 11);
+    }
     b |= (imm & 0b11111) << 7;
     b |= imm >> 5 << 25;
     b |= rs1 << 15;
@@ -362,9 +364,11 @@ u32 encode(const Instr &instr) {
   case InstrType::U:
   case InstrType::J:
     b |= rd << 7;
-    if (desc->type == InstrType::J)
+    if (desc->type == InstrType::J) {
+      imm >>= 1;
       imm = (imm >> 11 & 0xff) | ((imm >> 10 & 1) << 8) | ((imm & 0x3ff) << 9) |
             (imm >> 19 << 19);
+    }
     b |= imm << 12;
     break;
   default:
@@ -410,16 +414,20 @@ void decode(u32 b, Instr &instr, const InstrDesc *&id) {
     imm = (b >> 7 & 0b11111) | ((b >> 25 & 0x7f) << 5);
     rs1 = b >> 15 & 0b11111;
     rs2 = b >> 20 & 0b11111;
-    if (type == InstrType::B)
+    if (type == InstrType::B) {
       imm = (imm >> 1 & 0x3ff) | ((imm & 1) << 10) | ((imm >> 11 & 1) << 11);
+      imm <<= 1;
+    }
     break;
   case InstrType::U:
   case InstrType::J:
     rd = b >> 7 & 0b11111;
     imm = b >> 12;
-    if (type == InstrType::J)
+    if (type == InstrType::J) {
       imm = (imm >> 9 & 0x3ff) | ((imm >> 8 & 1) << 10) | ((imm & 0xff) << 11) |
             ((imm >> 19 & 1) << 19);
+      imm <<= 1;
+    }
     break;
 
   default:

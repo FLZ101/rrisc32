@@ -2,12 +2,12 @@
 
 #include <cctype>
 
-std::string substr(const std::string &s, int i) {
+std::string substr(const std::string &s, ssize_t i) {
   return substr(s, i, s.size());
 }
 
-std::string substr(const std::string &s, int i, int j) {
-  int n = s.size();
+std::string substr(const std::string &s, ssize_t i, ssize_t j) {
+  ssize_t n = s.size();
   if (i < 0)
     i += n;
   if (i < 0)
@@ -131,15 +131,24 @@ std::string unescape(const std::string &s) {
   return str;
 }
 
-std::vector<std::string> split(const std::string &s, const std::string &sep) {
-  assert(!sep.empty());
+size_t find(const std::string &s, const std::string &t, size_t pos) {
+  size_t res = s.find(t, pos);
+  if (res > s.size())
+    res = s.size();
+  return res;
+}
 
+std::vector<std::string> split(const std::string &s, const std::string &sep) {
   std::vector<std::string> v;
+  if (sep.empty()) {
+    for (char c : s)
+      v.push_back(std::string({c}));
+    return v;
+  }
+
   size_t i = 0;
   while (i < s.size()) {
-    size_t j = s.find(sep, i);
-    if (j == std::string::npos)
-      j = s.size();
+    size_t j = find(s, sep, i);
     v.push_back(trim(substr(s, i, j)));
     i = j + sep.size();
   }
