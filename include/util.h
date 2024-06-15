@@ -235,7 +235,14 @@ public:
 
   void append(char c) { s.push_back(c); }
 
-  const char *getData() { return s.c_str(); }
+  const char *getData() const { return s.c_str(); }
+
+  void extend(size_t n) {
+    if (n > s.size())
+      s.append(n - s.size(), '\0');
+  }
+
+  size_t size() const { return s.size(); }
 
 private:
   std::string s;
@@ -247,6 +254,9 @@ template <typename T, unsigned N> inline T signExt(T x) {
   } s;
   return s.x = x;
 }
+
+s32 hi20(s32 x);
+s32 lo12(s32 x);
 
 #ifndef NDEBUG
 extern std::string debugType;

@@ -224,7 +224,7 @@ const InstrDesc instrDescs[] = {
     InstrDesc(InstrType::I, 0b1100111, 0x0, 0x00, "jalr",
               [](Machine &m, u32 rd, u32 rs1, u32 rs2, s32 imm) {
                 m.wr(rd, m.ri());
-                m.wi(m.rr(rs1) + imm);
+                m.wi((m.rr(rs1) + imm) & static_cast<s32>(-2));
               }),
     InstrDesc(InstrType::U, 0b0110111, 0x0, 0x00, "lui",
               [](Machine &m, u32 rd, u32 rs1, u32 rs2, s32 imm) {

@@ -119,7 +119,7 @@ struct Statement {
   std::string s;
   std::vector<Expr> arguments;
 
-  unsigned offset = 0;
+  s64 offset = 0;
 };
 
 std::ostream &operator<<(std::ostream &os, const Statement &stmt);

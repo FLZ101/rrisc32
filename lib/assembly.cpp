@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "elf.h"
+#include "rrisc32.h"
 
 #define DEBUG_TYPE "assembly"
 
@@ -664,6 +665,7 @@ struct Relocation {
     rel.type = type;
     rel.addend = addend;
   }
+
   elf::Relocation rel = {
       .offset = 0, .sym = 0, .type = elf::R_RRISC32_NONE, .addend = 0};
 
@@ -673,35 +675,45 @@ struct Relocation {
 
 class ExprVal {
 public:
+  enum Type { Invalid, Int, Sym, Undef, Rel };
+
   ExprVal() {}
 
-  explicit ExprVal(s64 i) : ExprVal(nullptr, i) {}
+  explicit ExprVal(s64 i) : offset(i), type(Int) {}
 
-  ExprVal(Section *sec, s64 offset) : sec(sec), offset(offset), valid(true) {}
+  ExprVal(Section *sec, s64 offset, Symbol *sym = nullptr)
+      : sec(sec), offset(offset), sym(sym), type(Sym) {}
 
-  explicit ExprVal(const std::string &name) : name(name), valid(true) {
-    assert(!name.empty());
-  }
+  explicit ExprVal(Symbol *sym) : sym(sym), type(Undef) { assert(sym); }
 
-  bool isValid() const { return valid; }
+  ExprVal(elf::Elf_Word relType, Symbol *sym)
+      : relType(relType), sym(sym), type(Rel) {}
 
-  bool isInt() const { return valid && !isSym() && !isUndef(); }
+  bool isValid() const { return type != Invalid; }
+
+  bool isInt() const { return type == Int; }
   s64 getI() const { return offset; }
 
-  bool isSym() const { return valid && !!sec; }
+  bool isSym() const { return type == Sym; }
   Section *getSec() const { return sec; }
   s64 getOffset() const { return offset; }
 
-  bool isUndef() const { return valid && !name.empty(); }
-  const std::string &getName() const { return name; }
+  Symbol *getSym() const { return sym; }
+
+  bool isUndef() const { return type == Undef; }
+
+  bool isRel() const { return type == Rel; }
+  elf::Elf_Word getRelType() const { return relType; }
 
 private:
-  bool valid = false;
+  Type type = Invalid;
 
   Section *sec = nullptr;
   s64 offset = 0;
 
-  std::string name;
+  Symbol *sym = nullptr;
+
+  elf::Elf_Word relType = elf::R_RRISC32_NONE;
 };
 
 std::ostream &operator<<(std::ostream &os, const ExprVal &v) {
@@ -766,6 +778,9 @@ private:
 
   void checkCurSecName(const std::initializer_list<std::string> &names);
 
+  void addRelocation(Section *sec, s64 offset, Symbol *sym, elf::Elf_Word type,
+                     s64 addend = 0);
+
   Section secText{".text"};
   Section secRodata{".rodata"};
   Section secData{".data"};
@@ -777,6 +792,8 @@ private:
   std::map<std::string, std::unique_ptr<Symbol>> symTab;
 
   std::list<std::unique_ptr<Statement>> delayedStmts;
+
+  std::vector<std::unique_ptr<Relocation>> relocations;
 
   const AssemblerOpts opts;
 };
@@ -812,13 +829,20 @@ private:
       THROW(AssemblyError, "duplicated symbol", name);                         \
   } while (false)
 
-#define INVALID_STATEMENT() THROW(AssemblyError, "invalid statement", *stmt)
+#define INVALID_STATEMENT(...)                                                 \
+  THROW(AssemblyError, "invalid statement", *stmt, ##__VA_ARGS__)
+
+void AssemblerImpl::addRelocation(Section *sec, s64 offset, Symbol *sym,
+                                  elf::Elf_Word type, s64 addend) {
+  relocations.emplace_back(
+      std::make_unique<Relocation>(sec, offset, sym, type, addend));
+}
 
 ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
   std::vector<ExprVal> values;
   for (const Expr &e : expr.operands) {
     ExprVal v = evalExpr(e);
-    if (!v.isValid() || v.isUndef())
+    if (!v.isInt() && !v.isSym() && !v.isUndef())
       return ExprVal();
     values.push_back(v);
   }
@@ -839,11 +863,13 @@ ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
           return ExprVal(v0.getOffset() - v1.getOffset());
         return ExprVal();
       }
-      if (v0.isSym())
+      if (v0.isSym() && v1.isInt())
         return ExprVal(v0.getSec(), v0.getOffset() - v1.getI());
-      if (v1.isSym())
+      if (v0.isInt() && v1.isSym())
         return ExprVal();
-      return ExprVal(v0.getI() - v1.getI());
+      if (v0.isInt() && v1.isInt())
+        return ExprVal(v0.getI() - v1.getI());
+      return ExprVal();
     }
   } else if (name == "+") {
     CHECK_OPERANDS_SIZE(2);
@@ -855,6 +881,18 @@ ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
       return ExprVal(v1.getSec(), v0.getI() + v1.getOffset());
     if (v0.isSym() && v1.isInt())
       return ExprVal(v0.getSec(), v0.getOffset() + v1.getI());
+    return ExprVal();
+  } else if (isOneOf(name, {"hi", "lo"})) {
+    CHECK_OPERANDS_SIZE(1);
+    ExprVal v = values[0];
+    if (v.isInt())
+      return ExprVal(name == "hi" ? hi20(v.getI()) : lo12(v.getI()));
+
+    if (v.getSym()) {
+      elf::Elf_Word relType =
+          name == "hi" ? elf::R_RRISC32_HI20 : elf::R_RRISC32_LO12_I;
+      return ExprVal(relType, v.getSym());
+    }
     return ExprVal();
   } else {
     THROW(AssemblyError, "unimplemented Func " + name);
@@ -889,10 +927,10 @@ ExprVal AssemblerImpl::evalExpr(const Expr &expr) {
 
     Symbol *sym = addSymbol(expr.s);
     if (sym->sec)
-      return ExprVal(sym->sec, sym->offset);
+      return ExprVal(sym->sec, sym->offset, sym);
     if (sym->sym.sec == elf::SHN_ABS)
       return ExprVal(sym->offset);
-    return ExprVal(expr.s);
+    return ExprVal(sym);
   }
   case Expr::Func:
     return evalFunc(expr);
@@ -934,8 +972,6 @@ void AssemblerImpl::run() {
   handleDelayedStmts();
 
   cookSections();
-  cookSymbols();
-  cookRelocations();
 
   saveToFile();
 }
@@ -1103,15 +1139,12 @@ void AssemblerImpl::handleDelayedStmts() {
       const Expr &e1 = stmt->arguments[1];
 
       ExprVal v1 = evalExpr(e1);
-      if (!v1.isValid() || v1.isUndef())
-        INVALID_STATEMENT();
-
-      Symbol *sym = addSymbol(e0.s);
       if (v1.isInt()) {
-        sym->set(v1.getI());
+        addSymbol(e0.s)->set(v1.getI());
+      } else if (v1.isSym()) {
+        addSymbol(e0.s)->set(v1.getSec(), v1.getOffset());
       } else {
-        assert(v1.isSym());
-        sym->set(v1.getSec(), v1.getOffset());
+        INVALID_STATEMENT();
       }
     } else {
       UNREACHABLE();
@@ -1120,15 +1153,61 @@ void AssemblerImpl::handleDelayedStmts() {
 }
 
 void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {
-  const std::string &name = stmt->s;
+  rrisc32::Instr instr(stmt->s);
+
+  for (const Expr &expr : stmt->arguments) {
+    if (expr.type == Expr::Reg) {
+      instr.addOperand(expr.s);
+      continue;
+    }
+
+    ExprVal v = evalExpr(expr);
+    if (v.isInt()) {
+      instr.addOperand(v.getI());
+    } else if (v.isSym()) {
+      if (v.getSec() != curSec)
+        INVALID_STATEMENT("branch to another section", v.getSec()->name);
+
+      s64 imm = v.getOffset() - stmt->offset;
+      if (isOneOf(stmt->s,
+                  {"beq", "bne", "blt", "bge", "bltu", "bgeu", "jal"})) {
+        if (imm >> (stmt->s == "jal" ? 21 : 13))
+          INVALID_STATEMENT("out of range", imm);
+        if (imm & 1)
+          INVALID_STATEMENT("not even", imm);
+        instr.addOperand(imm);
+
+      } else {
+        INVALID_STATEMENT();
+      }
+    } else if (v.isRel()) {
+      instr.addOperand(0);
+      addRelocation(curSec, stmt->offset, v.getSym(), v.getRelType());
+
+    } else {
+      INVALID_STATEMENT();
+    }
+  }
+
+  curSec->bb.appendInt(rrisc32::encode(instr));
 }
 
 template <typename T>
 void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
   if (curSec->name == ".bss")
     return;
+
+  curSec->bb.extend(stmt->offset);
   for (const auto &expr : stmt->arguments) {
     ExprVal v = evalExpr(expr);
+    if (v.isSym() || v.isUndef()) {
+      if (sizeof(T) < 4)
+        INVALID_STATEMENT("size is too small", sizeof(T));
+      if (!v.getSym())
+        INVALID_STATEMENT("no symbol", sizeof(T));
+      addRelocation(curSec, curSec->bb.size(), v.getSym(), elf::R_RRISC32_32);
+      curSec->bb.appendInt(static_cast<T>(0));
+    }
     if (!v.isInt())
       INVALID_STATEMENT();
     curSec->bb.appendInt(static_cast<T>(v.getI()));
@@ -1202,10 +1281,6 @@ void AssemblerImpl::cookSections() {
   }
 }
 
-void AssemblerImpl::cookSymbols() {}
-
-void AssemblerImpl::cookRelocations() {}
-
 void AssemblerImpl::saveToFile() {
   // TODO: writer(filename + ".o", elf::ET_REL)
 }
@@ -1255,17 +1330,12 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
       THROW(AssemblyError, "can not define .");
 
     ExprVal v1 = evalExpr(e1);
-    if (!v1.isValid() || v1.isUndef()) {
-      delayedStmts.emplace_front(std::move(stmt));
-      return;
-    }
-
-    Symbol *sym = addSymbol(e0.s);
     if (v1.isInt()) {
-      sym->set(v1.getI());
+      addSymbol(e0.s)->set(v1.getI());
+    } else if (v1.isSym()) {
+      addSymbol(e0.s)->set(v1.getSec(), v1.getOffset());
     } else {
-      assert(v1.isSym());
-      sym->set(v1.getSec(), v1.getOffset());
+      delayedStmts.emplace_front(std::move(stmt));
     }
     return;
   }

@@ -155,6 +155,10 @@ std::vector<std::string> split(const std::string &s, const std::string &sep) {
   return v;
 }
 
+s32 hi20(s32 x) { return x >> 12 & 0xfffff; }
+
+s32 lo12(s32 x) { return x & 0xfff; }
+
 #ifndef NDEBUG
 std::string debugType;
 
