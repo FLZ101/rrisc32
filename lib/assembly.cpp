@@ -789,7 +789,7 @@ private:
   Section *sections[4] = {&secText, &secRodata, &secData, &secBss};
   Section *curSec = nullptr;
 
-  std::map<std::string, std::unique_ptr<Symbol>> symTab;
+  CacheMap<std::string, std::unique_ptr<Symbol>> symTab;
 
   std::list<std::unique_ptr<Statement>> delayedStmts;
 

@@ -4,6 +4,7 @@
 #include <cassert>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -257,6 +258,25 @@ template <typename T, unsigned N> inline T signExt(T x) {
 
 s32 hi20(s32 x);
 s32 lo12(s32 x);
+
+template <typename Key, typename T> class CacheMap {
+public:
+  CacheMap() {}
+
+  bool contains(const Key &k) const { return m.contains(k); }
+
+  T &operator[](const Key &k) {
+    if (!contains(k))
+      v.push_back(k);
+    return m[k];
+  }
+
+  const std::vector<Key> &keys() const { return v; }
+
+private:
+  std::vector<Key> v;
+  std::map<Key, T> m;
+};
 
 #ifndef NDEBUG
 extern std::string debugType;
