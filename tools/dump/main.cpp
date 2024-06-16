@@ -33,10 +33,7 @@ void dump(const Opts &o) {
 } // namespace
 
 int main(int argc, char **argv) {
-  CLI::App app;
-  app.description("Dump an ELF file");
-
-  ADD_DEBUG_OPT(app);
+  CLI::App app{"Dump an ELF file"};
 
   Opts o;
   app.add_flag("--all", o.dumpAll, "Same as --elf --seg --sec --sym --rel");
@@ -45,9 +42,9 @@ int main(int argc, char **argv) {
   app.add_flag("--sec", o.dumpSections, "Display section headers");
   app.add_flag("--sym", o.dumpSymbols, "Display symbols");
   app.add_flag("--rel", o.dumpRelocations, "Display relocations");
-
   app.add_option("<file>", o.filename)->required();
 
+  ADD_DEBUG_OPT(app);
   CLI11_PARSE(app, argc, argv);
 
   dump(o);
