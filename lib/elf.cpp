@@ -4,7 +4,7 @@ namespace elf {
 
 Reader::Reader(const std::string &filename) : filename(filename) {
   if (!ei.load(filename))
-    THROW(ELFError, "load", filename);
+    THROW(ELFError, "load", escape(filename));
 
   forEachSection([this](section &sec) {
     auto name = sec.get_name();
@@ -97,14 +97,6 @@ void Reader::forEachRelocation(section *sec, Reader::RelFn fn) {
     rel.secBelongTo = sec->get_index();
     fn(rel);
   }
-}
-
-void Reader::dump(std::ostream &os) {
-  dumpELFHeader(os);
-  dumpSegments(os);
-  dumpSections(os);
-  dumpSymbols(os);
-  dumpRelocations(os);
 }
 
 static std::string str_os_abi(unsigned char oa) {

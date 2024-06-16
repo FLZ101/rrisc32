@@ -71,7 +71,6 @@ public:
   void getRelocation(section *sec, Elf_Xword idx, Relocation &rel);
   void forEachRelocation(RelFn fn);
 
-  void dump(std::ostream &os);
   void dumpELFHeader(std::ostream &os);
   void dumpSegments(std::ostream &os);
   void dumpSections(std::ostream &os);

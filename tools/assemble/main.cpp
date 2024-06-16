@@ -7,9 +7,7 @@ using namespace assembly;
 
 int main(int argc, char *argv[]) {
   CLI::App app;
-
   ADD_DEBUG_OPT(app);
-
   CLI11_PARSE(app, argc, argv);
 
   TRY()
