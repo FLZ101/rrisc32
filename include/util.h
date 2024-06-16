@@ -235,8 +235,9 @@ public:
   void append(const std::string &str) { s.append(str); }
 
   void append(char c) { s.push_back(c); }
+  void append(size_t n, char c) { s.append(n, c); }
 
-  const char *getData() const { return s.c_str(); }
+  const std::string &getData() const { return s; }
 
   void extend(size_t n) {
     if (n > s.size())

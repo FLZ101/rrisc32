@@ -7,5 +7,5 @@ G="Unix Makefiles"
 cmake -Wno-dev -DCMAKE_BUILD_TYPE=Debug -G"$G" -B build -S .
 cmake --build build
 
-# ./build/tools/dump/dump
 ./build/tools/assemble/assemble
+./build/tools/dump/dump

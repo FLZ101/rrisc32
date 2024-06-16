@@ -290,4 +290,6 @@ TEST(DecodeTest, U) {
   CHECK(0x0000d097, "auipc x1, 13");
 }
 
+#undef check
+
 } // namespace

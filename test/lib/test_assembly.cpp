@@ -6,9 +6,11 @@ using namespace assembly;
 
 namespace {
 
+#define STR(b) (std::string(b, sizeof(b) - 1))
+
 #define CHECK(a, b)                                                            \
   do {                                                                         \
-    EXPECT_STREQ(joinSeq(" ", tokenize(a)).c_str(), b);                        \
+    EXPECT_EQ(joinSeq(" ", tokenize(a)), STR(b));                              \
   } while (false)
 
 TEST(LexerTest, Directive) {
@@ -55,7 +57,7 @@ TEST(LexerTest, Func) {
 
 #define CHECK(a, b)                                                            \
   do {                                                                         \
-    EXPECT_STREQ(toString(*(parse(a))).c_str(), b);                            \
+    EXPECT_EQ(toString(*(parse(a))), STR(b));                                  \
   } while (false)
 
 TEST(ParserTest, Directive) {

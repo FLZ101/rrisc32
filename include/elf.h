@@ -21,7 +21,7 @@ const unsigned char ELFOSABI_RRISC32 = ELFOSABI_NONE;
 
 const Elf_Word R_RRISC32_NONE = 0;
 const Elf_Word R_RRISC32_32 = 1;
-const Elf_Word R_RRISC32_CALL = 18;
+// const Elf_Word R_RRISC32_CALL = 18;
 const Elf_Word R_RRISC32_HI20 = 26;
 const Elf_Word R_RRISC32_LO12_I = 27;
 const Elf_Word R_RRISC32_LO12_S = 28;
@@ -119,7 +119,7 @@ public:
 
   void save() {
     if (!ei.save(filename))
-      THROW(ELFError, "save", filename);
+      THROW(ELFError, "save", escape(filename));
   }
 
   section *getSection(const std::string &name);
@@ -139,9 +139,12 @@ public:
   section *getSection(const std::string &name);
 
   Elf_Word addString(const std::string &s);
+  Elf_Word addSymbol(const Symbol *sym);
+  void addRelocation(const Relocation &rel);
 
 private:
   std::map<std::string, Elf_Word> stringCache;
+  std::map<const Symbol *, Elf_Word> symbolCache;
 };
 
 } // namespace elf

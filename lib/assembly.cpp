@@ -601,6 +601,7 @@ struct Section {
 
   std::string name;
   s64 offset = 0;
+  s64 size = 0;
 
   static const u8 Alignment = 12;
 
@@ -729,7 +730,7 @@ std::ostream &operator<<(std::ostream &os, const ExprVal &v) {
 
 class AssemblerImpl {
 public:
-  AssemblerImpl(const AssemblerOpts &opts) : opts(opts) {}
+  AssemblerImpl(AssemblerOpts o) : opts(o) {}
 
   void run();
 
@@ -739,22 +740,12 @@ private:
   void handleInstr(std::unique_ptr<Statement> stmt);
   void handleLabel(std::unique_ptr<Statement> stmt);
 
-  void addInstr(std::unique_ptr<Statement> stmt) {
-    stmt->offset = curSec->offset;
-    curSec->offset += 4;
-    curSec->stmts.emplace_back(std::move(stmt));
-  }
-
-  void addInstr(const std::string &s, const std::vector<Expr> &arguments) {
-    std::unique_ptr<Statement> stmt = std::make_unique<Statement>();
-    stmt->type = Statement::Instr;
-    stmt->s = s;
-    stmt->arguments = arguments;
-    addInstr(std::move(stmt));
-  }
+  void addInstr(std::unique_ptr<Statement> stmt);
+  void addInstr(const std::string &s, const std::vector<Expr> &arguments);
 
   template <typename T> void handleDirectiveD(std::unique_ptr<Statement> stmt);
   void handleDirectiveAscii(std::unique_ptr<Statement> stmt);
+  void handleDirectiveSec(const std::string &name);
 
   void handleDelayedStmts();
 
@@ -795,7 +786,7 @@ private:
 
   std::vector<std::unique_ptr<Relocation>> relocations;
 
-  const AssemblerOpts opts;
+  AssemblerOpts opts;
 };
 
 #define CHECK_CURRENT_SECTION()                                                \
@@ -949,9 +940,18 @@ void AssemblerImpl::run() {
       lines.push_back(std::move(line));
   }
 
+  for (Section *sec : sections) {
+    Symbol *sym = addSymbol(sec->name);
+    sym->set(sec, 0);
+    sym->sym.type = elf::STT_SECTION;
+    sym->sym.bind = elf::STB_LOCAL;
+  }
+
   for (unsigned i = 0; i < lines.size(); ++i) {
     TRY()
     std::unique_ptr<Statement> stmt = std::move(parse(lines[i]));
+    if (!stmt)
+      continue;
     switch (stmt->type) {
     case Statement::Directive:
       handleDirective(std::move(stmt));
@@ -969,11 +969,31 @@ void AssemblerImpl::run() {
     RETHROW(AssemblyError, i + 1, escape(lines[i]))
   }
 
+  for (Section *sec : sections) {
+    sec->size = sec->offset;
+    setSymbolSize(sec->name, sec->size);
+  }
+
   handleDelayedStmts();
 
   cookSections();
 
   saveToFile();
+}
+
+void AssemblerImpl::addInstr(std::unique_ptr<Statement> stmt) {
+  stmt->offset = curSec->offset;
+  curSec->offset += 4;
+  curSec->stmts.emplace_back(std::move(stmt));
+}
+
+void AssemblerImpl::addInstr(const std::string &s,
+                             const std::vector<Expr> &arguments) {
+  std::unique_ptr<Statement> stmt = std::make_unique<Statement>();
+  stmt->type = Statement::Instr;
+  stmt->s = s;
+  stmt->arguments = arguments;
+  addInstr(std::move(stmt));
 }
 
 void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
@@ -1098,19 +1118,16 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
 }
 
 void AssemblerImpl::setSymbolBind(const std::string &name, unsigned char bind) {
-  Symbol *sym = addSymbol(name);
-  sym->sym.bind = bind;
+  addSymbol(name)->sym.bind = bind;
 }
 
 void AssemblerImpl::setSymbolType(const std::string &name, unsigned char type) {
-  Symbol *sym = addSymbol(name);
-  sym->sym.type = type;
+  addSymbol(name)->sym.type = type;
 }
 
 void AssemblerImpl::setSymbolSize(const std::string &name,
                                   elf::Elf_Xword size) {
-  Symbol *sym = addSymbol(name);
-  sym->sym.size = size;
+  addSymbol(name)->sym.size = size;
 }
 
 void AssemblerImpl::handleDelayedStmts() {
@@ -1153,7 +1170,8 @@ void AssemblerImpl::handleDelayedStmts() {
 }
 
 void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {
-  rrisc32::Instr instr(stmt->s);
+  const std::string &name = stmt->s;
+  rrisc32::Instr instr(name);
 
   for (const Expr &expr : stmt->arguments) {
     if (expr.type == Expr::Reg) {
@@ -1165,25 +1183,24 @@ void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {
     if (v.isInt()) {
       instr.addOperand(v.getI());
     } else if (v.isSym()) {
+      if (!isOneOf(name, {"beq", "bne", "blt", "bge", "bltu", "bgeu", "jal"}))
+        INVALID_STATEMENT();
+
       if (v.getSec() != curSec)
         INVALID_STATEMENT("branch to another section", v.getSec()->name);
 
       s64 imm = v.getOffset() - stmt->offset;
-      if (isOneOf(stmt->s,
-                  {"beq", "bne", "blt", "bge", "bltu", "bgeu", "jal"})) {
-        if (imm >> (stmt->s == "jal" ? 21 : 13))
-          INVALID_STATEMENT("out of range", imm);
-        if (imm & 1)
-          INVALID_STATEMENT("not even", imm);
-        instr.addOperand(imm);
-
-      } else {
-        INVALID_STATEMENT();
-      }
+      if (imm >> (name == "jal" ? 21 : 13))
+        INVALID_STATEMENT("out of range", imm);
+      if (imm & 1)
+        INVALID_STATEMENT("not even", imm);
+      instr.addOperand(imm);
     } else if (v.isRel()) {
       instr.addOperand(0);
-      addRelocation(curSec, stmt->offset, v.getSym(), v.getRelType());
-
+      elf::Elf_Word relType = v.getRelType();
+      if (relType == elf::R_RRISC32_LO12_I && isOneOf(name, {"sb", "sh", "sw"}))
+        relType = elf::R_RRISC32_LO12_S;
+      addRelocation(curSec, stmt->offset, v.getSym(), relType);
     } else {
       INVALID_STATEMENT();
     }
@@ -1197,7 +1214,7 @@ void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
   if (curSec->name == ".bss")
     return;
 
-  curSec->bb.extend(stmt->offset);
+  // curSec->bb.extend(stmt->offset);
   for (const auto &expr : stmt->arguments) {
     ExprVal v = evalExpr(expr);
     if (v.isSym() || v.isUndef()) {
@@ -1270,9 +1287,7 @@ void AssemblerImpl::cookSections() {
           unsigned repeat =
               P2ALIGN(stmt->offset, evalExpr(stmt->arguments[0]).getI()) -
               stmt->offset;
-
-          for (unsigned i = 0; i < repeat; ++i)
-            curSec->bb.append('\0');
+          curSec->bb.append(repeat, '\0');
         } else {
           UNREACHABLE();
         }
@@ -1282,7 +1297,27 @@ void AssemblerImpl::cookSections() {
 }
 
 void AssemblerImpl::saveToFile() {
-  // TODO: writer(filename + ".o", elf::ET_REL)
+  elf::RRisc32Writer writer(opts.outFile, elf::ET_REL);
+
+  for (Section *sec : sections)
+    writer.getSection(sec->name)->set_data(sec->bb.getData());
+
+  for (auto &name : symTab.keys()) {
+    Symbol *sym = symTab[name].get();
+    sym->sym.value = sym->offset;
+    if (sym->sec)
+      sym->sym.sec = writer.getSection(sym->sec->name)->get_index();
+    writer.addSymbol(&sym->sym);
+  }
+
+  for (auto &rel : relocations) {
+    rel->rel.sym = writer.addSymbol(&rel->sym->sym);
+    rel->rel.secBelongTo =
+        writer.getSection(".rela" + rel->sec->name)->get_index();
+    writer.addRelocation(rel->rel);
+  }
+
+  writer.save();
 }
 
 void AssemblerImpl::checkCurSecName(
@@ -1293,6 +1328,13 @@ void AssemblerImpl::checkCurSecName(
       return;
   THROW(AssemblyError, joinSeq("|", names) + " expected",
         toString(curSec->name));
+}
+
+void AssemblerImpl::handleDirectiveSec(const std::string &name) {
+  Section *sec = getSection(name);
+  if (!sec)
+    THROW(AssemblyError, "unknown section", name);
+  curSec = sec;
 }
 
 void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
@@ -1310,7 +1352,7 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
 
     const Expr &e1 = stmt->arguments[1];
     if (e1.s != "function" && e1.s != "object")
-      THROW(AssemblyError, "symbol type must be function/object", e1.s);
+      THROW(AssemblyError, "symbol type is not function/object", e1.s);
 
     delayedStmts.emplace_back(std::move(stmt));
     return;
@@ -1343,11 +1385,12 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
   if (name == ".section") {
     CHECK_ARGUMENTS_SIZE(1);
     CHECK_ARGUMENT_TYPE(0, Expr::Str);
-    const std::string &secName = stmt->arguments[0].s;
-    Section *sec = getSection(secName);
-    if (!sec)
-      THROW(AssemblyError, "unknown section", secName);
-    curSec = sec;
+    handleDirectiveSec(stmt->arguments[0].s);
+    return;
+  }
+  if (isOneOf(name, {".text", ".rodata", ".data", ".bss"})) {
+    CHECK_ARGUMENTS_SIZE(0);
+    handleDirectiveSec(name);
     return;
   }
 

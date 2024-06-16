@@ -152,7 +152,10 @@ struct AssemblerOpts {
 
 class Assembler {
 public:
-  explicit Assembler(const AssemblerOpts &opts) : opts(opts) {}
+  explicit Assembler(AssemblerOpts o) : opts(o) {
+    if (opts.outFile.empty())
+      opts.outFile = opts.inFile + ".o";
+  }
 
   Assembler(const Assembler &) = delete;
   Assembler &operator=(const Assembler &) = delete;
@@ -160,7 +163,7 @@ public:
   void run();
 
 private:
-  const AssemblerOpts opts;
+  AssemblerOpts opts;
 };
 
 } // namespace assembly

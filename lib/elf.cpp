@@ -182,7 +182,7 @@ void Reader::dumpSections(std::ostream &os) {
     }
     if (!headerDumped) {
       os << "[ Sections ]\n";
-      os << "Idx\tAddr\tOff\tSize\tLink\tInfo\tAddrAlign\tEntSize\tFlags\t"
+      os << "Idx\tAddr\tOff\tSize\tLink\tInfo\tAddrAli\tEntSize\tFlags\t"
             "Type\tName\n";
       headerDumped = true;
     }
@@ -242,7 +242,7 @@ void Reader::dumpSymbols(std::ostream &os) {
     }
     if (!headerDumped) {
       os << "[ Symbols ]\n";
-      os << "SecBT\tIdx\tValue\tSize\tBind\tType\tVis\tSec\tName\n";
+      os << "SecBeTo\tIdx\tValue\tSize\tBind\tType\tVis\tSec\tName\n";
       headerDumped = true;
     }
     // clang-format off
@@ -265,8 +265,6 @@ std::string str_relocation_type(Elf_Word type) {
     return "NONE";
   case R_RRISC32_32:
     return "32";
-  case R_RRISC32_CALL:
-    return "CALL";
   case R_RRISC32_HI20:
     return "HI20";
   case R_RRISC32_LO12_I:
@@ -283,7 +281,7 @@ void Reader::dumpRelocations(std::ostream &os) {
   forEachRelocation([&](const Relocation &rel) {
     if (!headerDumped) {
       os << "[ Relocations ]\n";
-      os << "SecBT\tIdx\tOffset\tType\tAddend\tSym\tSecSym\tSecRel\n";
+      os << "SecBeTo\tIdx\tOffset\tType\tAddend\tSym\tSecSym\tSecRel\n";
       headerDumped = true;
     }
     // clang-format off
@@ -370,7 +368,6 @@ void RRisc32Reader::checkRelocations() {
     switch (rel.type) {
     case R_RRISC32_NONE:
     case R_RRISC32_32:
-    case R_RRISC32_CALL:
     case R_RRISC32_HI20:
     case R_RRISC32_LO12_I:
     case R_RRISC32_LO12_S:
@@ -449,6 +446,20 @@ Elf_Word RRisc32Writer::addString(const std::string &s) {
     stringCache[s] =
         string_section_accessor(getSection(".strtab")).add_string(s);
   return stringCache[s];
+}
+
+Elf_Word RRisc32Writer::addSymbol(const Symbol *sym) {
+  if (!symbolCache.contains(sym))
+    symbolCache[sym] =
+        symbol_section_accessor(ei, getSection(".symtab"))
+            .add_symbol(addString(sym->name), sym->value, sym->size, sym->bind,
+                        sym->type, sym->other, sym->sec);
+  return symbolCache[sym];
+}
+
+void RRisc32Writer::addRelocation(const Relocation &rel) {
+  relocation_section_accessor(ei, ei.sections[rel.secBelongTo])
+      .add_entry(rel.offset, rel.sym, rel.type, rel.addend);
 }
 
 } // namespace elf
