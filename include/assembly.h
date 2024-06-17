@@ -166,6 +166,8 @@ private:
   AssemblerOpts opts;
 };
 
+void assemble(const AssemblerOpts &o);
+
 } // namespace assembly
 
 #endif

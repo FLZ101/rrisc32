@@ -6,7 +6,9 @@
 #ifndef NDEBUG
 #define ADD_DEBUG_OPT(app)                                                     \
   do {                                                                         \
-    (app).add_option("--debug", debugType, "Set debug types");                 \
+    (app)                                                                      \
+        .add_option("--debug", debugType, "Set debug types")                   \
+        ->type_name("TYPE[,...]");                                             \
   } while (false)
 #else
 #define ADD_DEBUG_OPT(app)                                                     \

@@ -1515,4 +1515,9 @@ Symbol *AssemblerImpl::addSymbol(const std::string &name) {
 
 void Assembler::run() { AssemblerImpl(opts).run(); }
 
+void assemble(const AssemblerOpts &o) {
+  Assembler as{o};
+  as.run();
+}
+
 } // namespace assembly
