@@ -552,6 +552,38 @@ void decode(u32 b, Instr &instr, const InstrDesc *&id) {
   }
 }
 
+void decode(u32 b, Instr &instr) {
+  const InstrDesc *desc;
+  decode(b, instr, desc);
+}
+
+namespace test {
+u32 encode(const std::string &name, const std::string &operands) {
+  Instr instr(name);
+  for (const std::string &s : split(operands, ",")) {
+    if ('a' <= s[0] && s[0] <= 'z')
+      instr.addOperand(s);
+    else
+      instr.addOperand(parseInt(s));
+  }
+  return encode(instr);
+}
+
+u32 encode(std::string s) {
+  s = trim(s);
+  size_t i = find(s, " ");
+  std::string name = substr(s, 0, i);
+  std::string operands = substr(s, i);
+  return encode(name, operands);
+}
+
+std::string decode(u32 b) {
+  Instr instr;
+  decode(b, instr);
+  return toString(instr);
+}
+} // namespace test
+
 struct RRisc32Init {
   RRisc32Init() {
     initRegisterInfo();

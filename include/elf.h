@@ -76,6 +76,9 @@ public:
   void dumpSections(std::ostream &os);
   void dumpSymbols(std::ostream &os);
   void dumpRelocations(std::ostream &os);
+  void dumpHex(std::ostream &os);
+  void dumpHex(std::ostream &os, const section &sec);
+  void dumpHex(std::ostream &os, const std::string &name);
 
 protected:
   void forEachSymbol(section *sec, SymFn fn);
@@ -89,6 +92,10 @@ protected:
 class RRisc32Reader : public Reader {
 public:
   RRisc32Reader(std::string filename) : Reader(filename) { check(); }
+
+  void dumpDisassembly(std::ostream &os);
+  void dumpDisassembly(std::ostream &os, const section &sec);
+  void dumpDisassembly(std::ostream &os, const std::string &name);
 
 private:
   void check();

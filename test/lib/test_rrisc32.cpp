@@ -8,26 +8,7 @@ using namespace rrisc32;
 
 namespace {
 
-u32 encode(const std::string &name, const std::string &operands) {
-  Instr instr(name);
-  for (const std::string &s : split(operands, ",")) {
-    if ('a' <= s[0] && s[0] <= 'z')
-      instr.addOperand(s);
-    else
-      instr.addOperand(parseInt(s));
-  }
-  return encode(instr);
-}
-
-u32 encode(std::string s) {
-  s = trim(s);
-  size_t i = find(s, " ");
-  std::string name = substr(s, 0, i);
-  std::string operands = substr(s, i);
-  return encode(name, operands);
-}
-
-#define CHECK(b, s) EXPECT_EQ(b, encode(s))
+#define CHECK(b, s) EXPECT_EQ(b, test::encode(s))
 
 TEST(EncodeTest, R) {
   CHECK(0x003100b3, " add x1, x2, x3");
@@ -165,18 +146,11 @@ TEST(EncodeTest, Register) {
 
 #undef CHECK
 
-std::string decode(u32 b) {
-  Instr instr;
-  const InstrDesc *desc;
-  decode(b, instr, desc);
-  return toString(instr);
-}
-
 std::string normalize(const std::string &s) {
   return std::regex_replace(trim(s), std::regex(" +"), " ");
 }
 
-#define CHECK(b, s) EXPECT_EQ(decode(b), normalize(s))
+#define CHECK(b, s) EXPECT_EQ(test::decode(b), normalize(s))
 
 TEST(DecodeTest, R) {
   CHECK(0x003100b3, " add x1, x2, x3");

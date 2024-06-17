@@ -1,5 +1,7 @@
 #include "elf.h"
 
+#include "rrisc32.h"
+
 namespace elf {
 
 Reader::Reader(const std::string &filename) : filename(filename) {
@@ -287,6 +289,61 @@ void Reader::dumpRelocations(std::ostream &os) {
        << toHexStr(ei.sections[rel.secBelongTo]->get_info()) << "\n";
     // clang-format on
   });
+}
+
+void Reader::dumpHex(std::ostream &os) {
+  forEachSection([this, &os](const section &sec) {
+    if (sec.get_type() == SHT_PROGBITS && !(sec.get_flags() & SHF_EXECINSTR))
+      dumpHex(os, sec);
+  });
+}
+
+void Reader::dumpHex(std::ostream &os, const section &sec) {
+  const char *s = sec.get_data();
+  Elf_Xword n = sec.get_size();
+  Elf64_Addr addr = sec.get_address();
+  os << "[ Hex/" << sec.get_name() << " ]\n";
+  for (Elf_Xword i = 0; i < n;) {
+    u32 b = 0;
+    memcpy(&b, s + i, n - i < 4 ? n - i : 4);
+    if (i % 16 == 0)
+      os << toHexStr(addr + i, false, false) << "  ";
+    else
+      os << " ";
+    os << toHexStr(b, false, false);
+    i += 4;
+    if (i % 16 == 0 || i >= n)
+      os << "\n";
+  }
+}
+
+void Reader::dumpHex(std::ostream &os, const std::string &name) {
+  if (name2Section.contains(name))
+    dumpHex(os, *name2Section[name]);
+}
+
+void RRisc32Reader::dumpDisassembly(std::ostream &os) {
+  forEachSection([this, &os](const section &sec) {
+    if (sec.get_type() == SHT_PROGBITS && sec.get_flags() & SHF_EXECINSTR)
+      dumpDisassembly(os, sec);
+  });
+}
+
+void RRisc32Reader::dumpDisassembly(std::ostream &os, const section &sec) {
+  const char *s = sec.get_data();
+  Elf_Xword n = sec.get_size();
+  Elf64_Addr addr = sec.get_address();
+  os << "[ Disassembly/" << sec.get_name() << " ]\n";
+  for (Elf_Xword i = 0; i + 4 <= n; i += 4) {
+    u32 b = *reinterpret_cast<const u32 *>(s + i);
+    os << toHexStr(static_cast<u32>(addr + i), false, false) << "  "
+       << rrisc32::test::decode(b) << "\n";
+  }
+}
+
+void RRisc32Reader::dumpDisassembly(std::ostream &os, const std::string &name) {
+  if (name2Section.contains(name))
+    dumpDisassembly(os, *name2Section[name]);
 }
 
 void RRisc32Reader::check() {

@@ -140,6 +140,13 @@ u32 encode(const std::string &name,
            const std::vector<Instr::Operand> &operands);
 
 void decode(u32 b, Instr &instr, const InstrDesc *&desc);
+void decode(u32 b, Instr &instr);
+
+namespace test {
+u32 encode(const std::string &name, const std::string &operands);
+u32 encode(std::string s);
+std::string decode(u32 b);
+}
 
 } // namespace rrisc32
 #endif
