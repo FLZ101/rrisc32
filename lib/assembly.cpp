@@ -935,7 +935,7 @@ void AssemblerImpl::run() {
   {
     std::fstream ifs(opts.inFile, std::ios::in | std::ios::binary);
     if (!ifs)
-      THROW(AssemblyError, "read", opts.inFile);
+      THROW(AssemblyError, "read", escape(opts.inFile));
     for (std::string line; std::getline(ifs, line);)
       lines.push_back(std::move(line));
   }
