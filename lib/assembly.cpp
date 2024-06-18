@@ -57,7 +57,7 @@ std::ostream &operator<<(std::ostream &os, Token::Type type) {
 std::ostream &operator<<(std::ostream &os, const Token &tk) {
   switch (tk.type) {
   case Token::Int:
-    os << join("|", toString(tk.type), toHexStr(tk.i));
+    os << join("|", toString(tk.type), tk.i);
     break;
   case Token::Directive:
   case Token::Instr:
@@ -80,23 +80,15 @@ std::ostream &operator<<(std::ostream &os, const Token &tk) {
   return os;
 }
 
-bool Lexer::tryEat(const std::string &str) {
-  unsigned k = i + 1;
-  if (s.size() - k < str.size())
-    return false;
-  for (unsigned j = 0; j < str.size(); ++j)
-    if (s[k + j] != str[j])
-      return false;
-  return true;
-}
-
 bool Lexer::eat(const std::string &str) {
-  if (tryEat(str)) {
+  if (v().starts_with(str)) {
     i += str.size();
     return true;
   }
   return false;
 }
+
+std::string_view Lexer::v() { return subview(s, i + 1); }
 
 void Lexer::tokenize() {
 
@@ -173,8 +165,10 @@ void Lexer::tokenize() {
       break;
     case Expr:
       SKIP_SPACE
-      if (isDec(c)) {
+      if (isDec(c) || (c == '-' && !v().empty() && isDec(v()[0]))) {
         j = i;
+        if (c == '-')
+          c = s[++i];
         if (c == '0' && eat("x"))
           state = Hex;
         else
@@ -380,13 +374,7 @@ bool Lexer::checkLabel(const std::string &str) {
 
 void Lexer::cookStr(Token &tk) { tk.s = unescape(tk.s); }
 
-void Lexer::cookInt(Token &tk) {
-  if (tk.s.starts_with("0x")) {
-    tk.i = parseInt(substr(tk.s, 2), true);
-  } else {
-    tk.i = parseInt(tk.s);
-  }
-}
+void Lexer::cookInt(Token &tk) { tk.i = parseInt(tk.s); }
 
 std::vector<Token> tokenize(const std::string &s) {
   std::vector<Token> tokens;
@@ -533,7 +521,7 @@ std::ostream &operator<<(std::ostream &os, const Expr &expr) {
     os << escape(expr.s);
     break;
   case Expr::Int:
-    os << toHexStr(expr.i);
+    os << expr.i;
     break;
   case Expr::Sym:
     os << "$" << expr.s;

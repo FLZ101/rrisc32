@@ -7,6 +7,14 @@ std::string substr(const std::string &s, ssize_t i) {
 }
 
 std::string substr(const std::string &s, ssize_t i, ssize_t j) {
+  return std::string(subview(s, i, j));
+}
+
+std::string_view subview(const std::string &s, ssize_t i) {
+  return subview(s, i, s.size());
+}
+
+std::string_view subview(const std::string &s, ssize_t i, ssize_t j) {
   ssize_t n = s.size();
   if (i < 0)
     i += n;
@@ -18,7 +26,7 @@ std::string substr(const std::string &s, ssize_t i, ssize_t j) {
     j = n;
   if (i >= j)
     return "";
-  return s.substr(i, j - i);
+  return std::string_view(s).substr(i, j - i);
 }
 
 std::string trim(const std::string &s) {
@@ -36,6 +44,9 @@ std::string trim(const std::string &s) {
 s64 parseInt(const std::string &str, bool hex) {
   if (str.starts_with("-"))
     return -parseInt(substr(str, 1), hex);
+
+  if (str.starts_with("0x"))
+    return parseInt(substr(str, 2), true);
 
   s64 i = 0;
   if (hex) {

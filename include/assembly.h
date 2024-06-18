@@ -72,8 +72,8 @@ public:
   static bool isSym(char c) { return isLabel(c); }
 
 private:
-  bool tryEat(const std::string &str);
   bool eat(const std::string &str);
+  std::string_view v();
 
   void cookToken(Token &tk);
   void cookStatement(Token &tk);

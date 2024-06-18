@@ -168,6 +168,9 @@ std::string toHexStr(T x, bool ox = false, bool smart = true) {
 std::string substr(const std::string &s, ssize_t i);
 std::string substr(const std::string &s, ssize_t i, ssize_t j);
 
+std::string_view subview(const std::string &s, ssize_t i);
+std::string_view subview(const std::string &s, ssize_t i, ssize_t j);
+
 std::string trim(const std::string &s);
 
 s64 parseInt(const std::string &str, bool hex = false);
