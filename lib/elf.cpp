@@ -4,6 +4,26 @@
 
 namespace elf {
 
+void getSymbol(const elfio &ei, section *sec, Elf_Xword idx, Symbol &sym) {
+  bool ok = symbol_section_accessor(ei, sec).get_symbol(
+      idx, sym.name, sym.value, sym.size, sym.bind, sym.type, sym.sec,
+      sym.other);
+  if (!ok)
+    THROW(ELFError, "get symbol", sec->get_name(), idx);
+  sym.idx = idx;
+  sym.secBelongTo = sec->get_index();
+}
+
+void getRelocation(const elfio &ei, section *sec, Elf_Xword idx,
+                   Relocation &rel) {
+  bool ok = relocation_section_accessor(ei, sec).get_entry(
+      idx, rel.offset, rel.sym, rel.type, rel.addend);
+  if (!ok)
+    THROW(ELFError, "get relocation", sec->get_name(), idx);
+  rel.idx = idx;
+  rel.secBelongTo = sec->get_index();
+}
+
 Reader::Reader(const std::string &filename) : filename(filename) {
   if (!ei.load(filename))
     THROW(ELFError, "load", escape(filename));
@@ -36,16 +56,6 @@ void Reader::forEachSection(Reader::SecFn fn) {
   }
 }
 
-void Reader::getSymbol(section *sec, Elf_Xword idx, Symbol &sym) {
-  bool ok = symbol_section_accessor(ei, sec).get_symbol(
-      idx, sym.name, sym.value, sym.size, sym.bind, sym.type, sym.sec,
-      sym.other);
-  if (!ok)
-    THROW(ELFError, "get symbol", sec->get_name(), idx);
-  sym.idx = idx;
-  sym.secBelongTo = sec->get_index();
-}
-
 void Reader::forEachSymbol(Reader::SymFn fn) {
   forEachSection([&](section &sec) {
     if (sec.get_type() == SHT_SYMTAB)
@@ -56,26 +66,12 @@ void Reader::forEachSymbol(Reader::SymFn fn) {
 void Reader::forEachSymbol(section *sec, Reader::SymFn fn) {
   if (!sec)
     return;
-  const symbol_section_accessor &ssa = symbol_section_accessor(ei, sec);
-  for (Elf_Xword i = 0; i < ssa.get_symbols_num(); ++i) {
+  Elf_Xword n = symbol_section_accessor(ei, sec).get_symbols_num();
+  for (Elf_Xword i = 0; i < n; ++i) {
     Symbol sym;
-    bool ok = ssa.get_symbol(i, sym.name, sym.value, sym.size, sym.bind,
-                             sym.type, sym.sec, sym.other);
-    if (!ok)
-      THROW(ELFError, "get symbol", sec->get_name(), i);
-    sym.idx = i;
-    sym.secBelongTo = sec->get_index();
+    getSymbol(ei, sec, i, sym);
     fn(sym);
   }
-}
-
-void Reader::getRelocation(section *sec, Elf_Xword idx, Relocation &rel) {
-  bool ok = relocation_section_accessor(ei, sec).get_entry(
-      idx, rel.offset, rel.sym, rel.type, rel.addend);
-  if (!ok)
-    THROW(ELFError, "get relocation", sec->get_name(), idx);
-  rel.idx = idx;
-  rel.secBelongTo = sec->get_index();
 }
 
 void Reader::forEachRelocation(Reader::RelFn fn) {
@@ -89,14 +85,10 @@ void Reader::forEachRelocation(Reader::RelFn fn) {
 void Reader::forEachRelocation(section *sec, Reader::RelFn fn) {
   if (!sec)
     return;
-  const relocation_section_accessor &rsa = relocation_section_accessor(ei, sec);
-  for (Elf_Xword i = 0; i < rsa.get_entries_num(); ++i) {
+  Elf_Xword n = relocation_section_accessor(ei, sec).get_entries_num();
+  for (Elf_Xword i = 0; i < n; ++i) {
     Relocation rel;
-    bool ok = rsa.get_entry(i, rel.offset, rel.sym, rel.type, rel.addend);
-    if (!ok)
-      THROW(ELFError, "get relocation", sec->get_name(), i);
-    rel.idx = i;
-    rel.secBelongTo = sec->get_index();
+    getRelocation(ei, sec, i, rel);
     fn(rel);
   }
 }
@@ -230,6 +222,7 @@ void Reader::dumpSymbols(std::ostream &os) {
     case STT_OBJECT:
     case STT_FUNC:
     case STT_SECTION:
+    case STT_NOTYPE:
       break;
     default:
       return;
@@ -453,6 +446,28 @@ section *Writer::addSection(const std::string &name, Elf_Word type,
   sec->set_entry_size(ei.get_default_entry_size(type));
   sec->set_flags(flags);
   return sec;
+}
+
+void Writer::save() {
+  for (auto &sec : ei.sections) {
+    if (sec->get_type() != SHT_SYMTAB)
+      continue;
+
+    Elf_Xword n = symbol_section_accessor(ei, sec.get()).get_symbols_num();
+    Elf_Xword j = 0;
+    for (Elf_Xword i = 0; i < n; ++i) {
+      Symbol sym;
+      getSymbol(ei, sec.get(), i, sym);
+      if (sym.bind == STB_LOCAL)
+        j = i;
+    }
+
+    // One greater than the symbol table index of the last local symbol
+    sec->set_info(j + 1);
+  }
+
+  if (!ei.save(filename))
+    THROW(ELFError, "save", escape(filename));
 }
 
 section *RRisc32Writer::getSection(const std::string &name) {

@@ -65,10 +65,7 @@ public:
   section *getSection(const std::string &name);
   void forEachSection(SecFn fn);
 
-  void getSymbol(section *sec, Elf_Xword idx, Symbol &sym);
   void forEachSymbol(SymFn fn);
-
-  void getRelocation(section *sec, Elf_Xword idx, Relocation &rel);
   void forEachRelocation(RelFn fn);
 
   void dumpELFHeader(std::ostream &os);
@@ -123,10 +120,7 @@ public:
 
   elfio &getEI() { return ei; }
 
-  void save() {
-    if (!ei.save(filename))
-      THROW(ELFError, "save", escape(filename));
-  }
+  void save();
 
   section *getSection(const std::string &name);
   section *addSection(const std::string &name, Elf_Word type, Elf_Xword flags);

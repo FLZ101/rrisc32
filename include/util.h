@@ -184,7 +184,7 @@ size_t find(const std::string &s, const std::string &t, size_t pos = 0);
 std::vector<std::string> split(const std::string &s, const std::string &sep);
 
 #define ALIGN(x, n) (((x) + ((n) - 1)) & ~((n) - 1))
-#define P2ALIGN(x, n) ALIGN((x), (2 << (n)))
+#define P2ALIGN(x, n) ALIGN((x), (1 << (n)))
 
 template <typename T, typename Container = std::initializer_list<T>>
 bool isOneOf(const T &x, const Container &elements) {

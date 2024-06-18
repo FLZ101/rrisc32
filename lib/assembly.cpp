@@ -568,7 +568,7 @@ const Token *Parser::eat(Token::Type type) { return eat({type}); }
 const Token *Parser::expect(const std::initializer_list<Token::Type> &types) {
   const Token *tk = eat(types);
   if (!tk)
-    THROW(AssemblyError, joinSeq("|", types) + " expected",
+    THROW(AssemblyError, joinSeq("|", types) + " expected", i,
           toString(tokens[i]));
   return tk;
 }
@@ -861,6 +861,24 @@ ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
     if (v0.isSym() && v1.isInt())
       return ExprVal(v0.getSec(), v0.getOffset() + v1.getI());
     return ExprVal();
+  } else if (name.size() == 1 && isOneOf(name[0], "*/")) {
+    CHECK_OPERANDS_SIZE(2);
+    ExprVal v0 = values[0];
+    ExprVal v1 = values[1];
+    if (!v0.isInt() || !v1.isInt())
+      return ExprVal();
+    s64 i0 = v0.getI();
+    s64 i1 = v1.getI();
+    switch (name[0]) {
+    case '*':
+      return ExprVal(i0 * i1);
+    case '/':
+      if (!i1)
+        return ExprVal();
+      return ExprVal(i0 / i1);
+    default:
+      UNREACHABLE();
+    }
   } else if (isOneOf(name, {"hi", "lo"})) {
     CHECK_OPERANDS_SIZE(1);
     ExprVal v = values[0];
@@ -874,7 +892,7 @@ ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
     }
     return ExprVal();
   } else {
-    THROW(AssemblyError, "unimplemented Func " + name);
+    THROW(AssemblyError, "unimplemented Func ", escape(name));
   }
 }
 

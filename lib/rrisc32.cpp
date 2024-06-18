@@ -578,10 +578,16 @@ u32 encode(std::string s) {
 }
 
 std::string decode(u32 b) {
-  Instr instr;
-  decode(b, instr);
-  return toString(instr);
+  try {
+    Instr instr;
+    decode(b, instr);
+    return toString(instr);
+  } catch (const Exception &ex) {
+    std::cerr << ex.what() << "\n";
+    return toHexStr(b, false, false);
+  }
 }
+
 } // namespace test
 
 struct RRisc32Init {
