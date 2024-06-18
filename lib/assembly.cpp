@@ -724,16 +724,19 @@ public:
 
 private:
   void handleDirective(std::unique_ptr<Statement> stmt);
-  void expandInstr(std::unique_ptr<Statement> stmt);
-  void handleInstr(std::unique_ptr<Statement> stmt);
-  void handleLabel(std::unique_ptr<Statement> stmt);
+  void handleDirectiveSec(const std::string &name);
 
+  void expandInstr(std::unique_ptr<Statement> stmt);
+  void expandInstr(const std::string &s, const std::vector<Expr> &arguments);
   void addInstr(std::unique_ptr<Statement> stmt);
   void addInstr(const std::string &s, const std::vector<Expr> &arguments);
 
+  void handleLabel(std::unique_ptr<Statement> stmt);
+
+  void handleInstr(std::unique_ptr<Statement> stmt);
+
   template <typename T> void handleDirectiveD(std::unique_ptr<Statement> stmt);
   void handleDirectiveAscii(std::unique_ptr<Statement> stmt);
-  void handleDirectiveSec(const std::string &name);
 
   void handleDelayedStmts();
 
@@ -1000,6 +1003,15 @@ void AssemblerImpl::addInstr(const std::string &s,
   stmt->s = s;
   stmt->arguments = arguments;
   addInstr(std::move(stmt));
+}
+
+void AssemblerImpl::expandInstr(const std::string &s,
+                                const std::vector<Expr> &arguments) {
+  std::unique_ptr<Statement> stmt = std::make_unique<Statement>();
+  stmt->type = Statement::Instr;
+  stmt->s = s;
+  stmt->arguments = arguments;
+  expandInstr(std::move(stmt));
 }
 
 void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
