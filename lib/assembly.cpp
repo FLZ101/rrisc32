@@ -968,7 +968,12 @@ void AssemblerImpl::run() {
       break;
     case Statement::Instr:
       checkCurSecName({".text"});
-      expandInstr(std::move(stmt));
+      if (curSec->rep > 1) {
+        while (curSec->rep--)
+          expandInstr(std::move(std::make_unique<Statement>(*stmt)));
+      } else {
+        expandInstr(std::move(stmt));
+      }
       break;
     case Statement::Label:
       handleLabel(std::move(stmt));
@@ -1039,7 +1044,7 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     const Expr &e2 = stmt->arguments[2];
-    addInstr("lui", {e1, Expr("hi", {e2})});
+    addInstr("lui", {e0, Expr("hi", {e2})});
     addInstr(name, {e0, e1, Expr("lo", {e2})});
   } else if (name == "nop" && format == "") {
     addInstr("addi", {x0, x0, Expr(0)});
@@ -1059,21 +1064,21 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     addInstr("slli", {e0, e1, Expr(24)});
-    addInstr("srai", {e0, e1, Expr(24)});
+    addInstr("srai", {e0, e0, Expr(24)});
   } else if (name == "sext.h" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     addInstr("slli", {e0, e1, Expr(16)});
-    addInstr("srai", {e0, e1, Expr(16)});
+    addInstr("srai", {e0, e0, Expr(16)});
   } else if (name == "zext.b" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     addInstr("andi", {e0, e1, Expr(255)});
-  } else if (name == "zext.b" && format == "rr") {
+  } else if (name == "zext.h" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     addInstr("slli", {e0, e1, 16});
-    addInstr("srli", {e0, e1, 16});
+    addInstr("srli", {e0, e0, 16});
   } else if (name == "seqz" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
@@ -1094,7 +1099,7 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
              format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
-    expandInstr(substr(name, -1), {e0, x0, e1});
+    expandInstr(substr(name, 0, -1), {e0, x0, e1});
   } else if (isOneOf(name, {"blez", "bgtz"}) && format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
@@ -1213,10 +1218,17 @@ void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {
         INVALID_STATEMENT("branch to another section", v.getSec()->name);
 
       s64 imm = v.getOffset() - stmt->offset;
-      if (imm >> (name == "jal" ? 21 : 13))
-        INVALID_STATEMENT("out of range", imm);
       if (imm & 1)
         INVALID_STATEMENT("not even", imm);
+
+      s64 lo = signExt<s64, 13>(0x1000);
+      s64 hi = 0x0ffeu;
+      if (name == "jal") {
+        lo = signExt<s64, 21>(0x100000);
+        hi = 0x0ffffeu;
+      }
+      if (imm < lo || imm > hi)
+        INVALID_STATEMENT("out of range", imm);
       instr.addOperand(imm);
     } else if (v.isRel()) {
       instr.addOperand(0);
@@ -1237,7 +1249,6 @@ void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
   if (curSec->name == ".bss")
     return;
 
-  // curSec->bb.extend(stmt->offset);
   for (const auto &expr : stmt->arguments) {
     ExprVal v = evalExpr(expr);
     if (v.isSym() || v.isUndef()) {
@@ -1247,6 +1258,7 @@ void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
         INVALID_STATEMENT("no symbol", sizeof(T));
       addRelocation(curSec, curSec->bb.size(), v.getSym(), elf::R_RRISC32_32);
       curSec->bb.appendInt(static_cast<T>(0));
+      continue;
     }
     if (!v.isInt())
       INVALID_STATEMENT();
