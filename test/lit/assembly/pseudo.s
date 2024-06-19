@@ -1,6 +1,8 @@
 # RUN: assemble -o %t %s
-# RUN: dump --sym %t | tee tmp.txt | filecheck %s --check-prefix=SYM
 # RUN: dump --dis .text %t | filecheck %s --check-prefix=TEXT
+# RUN: dump --sec %t | tee tmp.txt | filecheck %s --check-prefix=SEC
+# RUN: dump --sym %t | filecheck %s --check-prefix=SYM
+# RUN: dump --rel %t | filecheck %s --check-prefix=REL
 
   .text
   nop
@@ -51,16 +53,6 @@ long_long_ago:
 far_away:
   .dw $long_long_ago
 
-SYM:      [ Symbols ]
-SYM-NEXT: SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
-SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
-SYM-NEXT: 06      01      00      04a4    LOCAL   SECTION DEF     02      .text
-SYM-NEXT: 06      02      00      0404    LOCAL   SECTION DEF     03      .rodata
-SYM-NEXT: 06      03      00      00      LOCAL   SECTION DEF     04      .data
-SYM-NEXT: 06      04      00      00      LOCAL   SECTION DEF     05      .bss
-SYM-NEXT: 06      05      04      00      GLOBAL  NOTYPE  DEF     02      long_long_ago
-SYM-NEXT: 06      06      0400    00      GLOBAL  NOTYPE  DEF     03      far_away
-
 # TEXT:      [ Disassembly/.text ]
 # TEXT-NEXT: 00000000  addi x0, x0, 0
 # TEXT:      00000400  addi x0, x0, 0
@@ -74,20 +66,20 @@ SYM-NEXT: 06      06      0400    00      GLOBAL  NOTYPE  DEF     03      far_aw
 # TEXT-NEXT: 00000420  lb x1, x1, 0
 # TEXT-NEXT: 00000424  lui x1, -4088
 # TEXT-NEXT: 00000428  lb x1, x1, -2048
-# TEXT-NEXT: 0000042c  lui x2, 0
+# TEXT-NEXT: 0000042c  lui x1, 0
 # TEXT-NEXT: 00000430  sb x1, x2, 0
-# TEXT-NEXT: 00000434  lui x2, -4088
+# TEXT-NEXT: 00000434  lui x1, -4088
 # TEXT-NEXT: 00000438  sb x1, x2, -2048
 # TEXT-NEXT: 0000043c  addi x1, x2, 0
 # TEXT-NEXT: 00000440  xori x1, x2, -1
 # TEXT-NEXT: 00000444  sub x1, x0, x2
 # TEXT-NEXT: 00000448  slli x1, x2, 24
-# TEXT-NEXT: 0000044c  srai x1, x2, 24
+# TEXT-NEXT: 0000044c  srai x1, x1, 24
 # TEXT-NEXT: 00000450  slli x1, x2, 16
-# TEXT-NEXT: 00000454  srai x1, x2, 16
+# TEXT-NEXT: 00000454  srai x1, x1, 16
 # TEXT-NEXT: 00000458  andi x1, x2, 255
 # TEXT-NEXT: 0000045c  slli x1, x2, 16
-# TEXT-NEXT: 00000460  srli x1, x2, 16
+# TEXT-NEXT: 00000460  srli x1, x1, 16
 # TEXT-NEXT: 00000464  sltiu x1, x2, 1
 # TEXT-NEXT: 00000468  sltu x1, x0, x2
 # TEXT-NEXT: 0000046c  slt x1, x2, x0
@@ -104,3 +96,36 @@ SYM-NEXT: 06      06      0400    00      GLOBAL  NOTYPE  DEF     03      far_aw
 # TEXT-NEXT: 00000498  jalr x1, x1, 0
 # TEXT-NEXT: 0000049c  lui x6, 0
 # TEXT-NEXT: 000004a0  jalr x0, x6, 0
+
+# SEC:      Idx     Addr    Off     Size    Link    Info    AddrAli EntSize Flags   Type    Name
+# SEC-NEXT: 01      00      34      4c      00      00      01      00              STRTAB  .shstrtab
+# SEC-NEXT: 02      00      80      04a4    00      00      00      00      AE      PROGBIT .text
+# SEC-NEXT: 03      00      0524    0404    00      00      00      00      A       PROGBIT .rodata
+# SEC-NEXT: 04      00      0928    00      00      00      00      00      AW      PROGBIT .data
+# SEC-NEXT: 05      00      0928    00      00      00      00      00      AW      NOBITS  .bss
+# SEC-NEXT: 06      00      0928    70      07      05      00      10              SYMTAB  .symtab
+# SEC-NEXT: 07      00      0998    31      00      00      00      00              STRTAB  .strtab
+# SEC-NEXT: 08      00      09c9    78      06      02      00      0c              RELA    .rela.text
+# SEC-NEXT: 09      00      0a41    0c      06      03      00      0c              RELA    .rela.rodata
+
+# SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
+# SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
+# SYM-NEXT: 06      01      00      04a4    LOCAL   SECTION DEF     02      .text
+# SYM-NEXT: 06      02      00      0404    LOCAL   SECTION DEF     03      .rodata
+# SYM-NEXT: 06      03      00      00      LOCAL   SECTION DEF     04      .data
+# SYM-NEXT: 06      04      00      00      LOCAL   SECTION DEF     05      .bss
+# SYM-NEXT: 06      05      04      00      GLOBAL  NOTYPE  DEF     02      long_long_ago
+# SYM-NEXT: 06      06      0400    00      GLOBAL  NOTYPE  DEF     03      far_away
+
+# REL:      SecBeTo Idx     Offset  Type    Addend  Sym     SecSym  SecRel
+# REL-NEXT: 08      00      040c    HI20    00      06      06      02
+# REL-NEXT: 08      01      0410    LO12_I  00      06      06      02
+# REL-NEXT: 08      02      041c    HI20    00      06      06      02
+# REL-NEXT: 08      03      0420    LO12_I  00      06      06      02
+# REL-NEXT: 08      04      042c    HI20    00      06      06      02
+# REL-NEXT: 08      05      0430    LO12_S  00      06      06      02
+# REL-NEXT: 08      06      0494    HI20    00      05      06      02
+# REL-NEXT: 08      07      0498    LO12_I  00      05      06      02
+# REL-NEXT: 08      08      049c    HI20    00      05      06      02
+# REL-NEXT: 08      09      04a0    LO12_I  00      05      06      02
+# REL-NEXT: 09      00      0400    32      00      05      06      03

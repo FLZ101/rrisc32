@@ -607,12 +607,12 @@ const Statement *Section::findLabel(const std::string &name) {
                              [](const std::unique_ptr<Statement> &stmt,
                                 s64 offset) { return stmt->offset < offset; });
   if (name.ends_with('b')) {
-    while (++it >= stmts.cbegin())
+    while (--it >= stmts.cbegin())
       if ((*it)->s[0] == name[0])
         return it->get();
   } else {
     assert(name.ends_with('f'));
-    while (it != stmts.cend())
+    for (; it != stmts.cend(); ++it)
       if ((*it)->s[0] == name[0])
         return it->get();
   }
@@ -734,10 +734,10 @@ private:
 
   void handleLabel(std::unique_ptr<Statement> stmt);
 
-  void handleInstr(std::unique_ptr<Statement> stmt);
+  void handleInstr(Statement *stmt);
 
-  template <typename T> void handleDirectiveD(std::unique_ptr<Statement> stmt);
-  void handleDirectiveAscii(std::unique_ptr<Statement> stmt);
+  template <typename T> void handleDirectiveD(Statement *stmt);
+  void handleDirectiveAscii(Statement *stmt);
 
   void handleDelayedStmts();
 
@@ -1197,7 +1197,7 @@ void AssemblerImpl::handleDelayedStmts() {
   }
 }
 
-void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {
+void AssemblerImpl::handleInstr(Statement *stmt) {
   const std::string &name = stmt->s;
   rrisc32::Instr instr(name);
 
@@ -1244,8 +1244,7 @@ void AssemblerImpl::handleInstr(std::unique_ptr<Statement> stmt) {
   curSec->bb.appendInt(rrisc32::encode(instr));
 }
 
-template <typename T>
-void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
+template <typename T> void AssemblerImpl::handleDirectiveD(Statement *stmt) {
   if (curSec->name == ".bss")
     return;
 
@@ -1266,7 +1265,7 @@ void AssemblerImpl::handleDirectiveD(std::unique_ptr<Statement> stmt) {
   }
 }
 
-void AssemblerImpl::handleDirectiveAscii(std::unique_ptr<Statement> stmt) {
+void AssemblerImpl::handleDirectiveAscii(Statement *stmt) {
   if (curSec->name == ".bss")
     return;
   for (const auto &expr : stmt->arguments) {
@@ -1282,19 +1281,19 @@ void AssemblerImpl::cookSections() {
     for (std::unique_ptr<Statement> &stmt : sec->stmts) {
       curSec->offset = stmt->offset;
       if (stmt->type == Statement::Instr) {
-        handleInstr(std::move(stmt));
+        handleInstr(stmt.get());
       } else if (stmt->type == Statement::Directive) {
         const std::string &name = stmt->s;
         if (name == ".db") {
-          handleDirectiveD<u8>(std::move(stmt));
+          handleDirectiveD<u8>(stmt.get());
         } else if (name == ".dh") {
-          handleDirectiveD<u16>(std::move(stmt));
+          handleDirectiveD<u16>(stmt.get());
         } else if (name == ".dw") {
-          handleDirectiveD<u32>(std::move(stmt));
+          handleDirectiveD<u32>(stmt.get());
         } else if (name == ".dq") {
-          handleDirectiveD<u64>(std::move(stmt));
+          handleDirectiveD<u64>(stmt.get());
         } else if (name == ".ascii" || name == ".asciz") {
-          handleDirectiveAscii(std::move(stmt));
+          handleDirectiveAscii(stmt.get());
         } else if (name == ".fill") {
           if (curSec->name == ".bss")
             return;
