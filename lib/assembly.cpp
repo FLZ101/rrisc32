@@ -590,6 +590,7 @@ struct Section {
   std::string name;
   s64 offset = 0;
   s64 size = 0;
+  s64 rep = 0;
 
   static const u8 Alignment = 12;
 
@@ -1093,20 +1094,24 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
              format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
-    addInstr(substr(name, -1), {e0, x0, e1});
+    expandInstr(substr(name, -1), {e0, x0, e1});
   } else if (isOneOf(name, {"blez", "bgtz"}) && format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     std::string s = substr(name, 0, -1);
     s[1] = s[1] == 'l' ? 'g' : 'l';
-    addInstr(s, {x0, e0, e1});
+    expandInstr(s, {x0, e0, e1});
   } else if (isOneOf(name, {"bgt", "ble", "bgtu", "bleu"}) && format == "rri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     const Expr &e2 = stmt->arguments[2];
     std::string s = name;
     s[1] = s[1] == 'l' ? 'g' : 'l';
-    addInstr(s, {e1, e0, e2});
+    expandInstr(s, {e1, e0, e2});
+  } else if (isOneOf(name, {"beq", "bne", "blt", "bge", "bltu", "bgeu"}) &&
+             format == "rri") {
+    // TODO: convert conditional branches into far branches when necessary
+    addInstr(std::move(stmt));
   } else if (name == "j" && format == "i") {
     const Expr &e0 = stmt->arguments[0];
     addInstr("jal", {x0, e0});
@@ -1474,13 +1479,39 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
     CHECK_CURRENT_SECTION();
     CHECK_ARGUMENTS_SIZE(1);
     ExprVal v = evalExpr(stmt->arguments[0]);
-    if (!v.isInt() || v.getI() > Section::Alignment || v.getI() < 0)
+    if (!v.isInt())
       INVALID_STATEMENT();
-    if (v.getI() == 0)
+    s64 n = v.getI();
+    if (n > Section::Alignment || n < 0)
+      INVALID_STATEMENT();
+    if (n == 0)
       return;
-    stmt->offset = curSec->offset;
-    curSec->offset = P2ALIGN(curSec->offset, v.getI());
-    curSec->stmts.emplace_back(std::move(stmt));
+
+    if (curSec->name == ".text") {
+      if (n < 3)
+        return;
+      s64 m = P2ALIGN(curSec->offset, n) - curSec->offset;
+      assert((m & 0b11) == 0);
+      m >>= 2;
+      while (m-- > 0)
+        expandInstr("nop", {});
+    } else {
+      stmt->offset = curSec->offset;
+      curSec->offset = P2ALIGN(curSec->offset, n);
+      curSec->stmts.emplace_back(std::move(stmt));
+    }
+    return;
+  }
+
+  if (name == ".rep") {
+    checkCurSecName({".text"});
+    CHECK_ARGUMENTS_SIZE(1);
+    ExprVal v = evalExpr(stmt->arguments[0]);
+    if (!v.isInt() || v.getI() < 0)
+      INVALID_STATEMENT();
+    s64 n = v.getI();
+    if (n > 1)
+      curSec->rep = n;
     return;
   }
 

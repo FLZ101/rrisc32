@@ -22,7 +22,7 @@ f:
 
 # TEXT:      [ Disassembly/.text ]
 # TEXT-NEXT: 00000000  add x1, x2, x3
-# TEXT-NEXT: 00000004  00000000
+# TEXT-NEXT: 00000004  addi x0, x0, 0
 # TEXT-NEXT: 00000008  addi x1, x2, -1
 
 # DATA:      [ Hex/.data ]
