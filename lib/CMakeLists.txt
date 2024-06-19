@@ -19,6 +19,7 @@ add_library(rrisc32 STATIC
     rrisc32.cpp
     elf.cpp
     assembly.cpp
+    link.cpp
 )
 
 target_link_libraries(rrisc32
