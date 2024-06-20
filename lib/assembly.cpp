@@ -717,9 +717,12 @@ std::ostream &operator<<(std::ostream &os, const ExprVal &v) {
   return os;
 }
 
-class AssemblerImpl {
+class Assembler {
 public:
-  AssemblerImpl(AssemblerOpts o) : opts(o) {}
+  Assembler(AssemblerOpts o) : opts(o) {}
+
+  Assembler(const Assembler &) = delete;
+  Assembler &operator=(const Assembler &) = delete;
 
   void run();
 
@@ -817,13 +820,13 @@ private:
 #define INVALID_STATEMENT(...)                                                 \
   THROW(AssemblyError, "invalid statement", *stmt, ##__VA_ARGS__)
 
-void AssemblerImpl::addRelocation(Section *sec, s64 offset, Symbol *sym,
-                                  elf::Elf_Word type, s64 addend) {
+void Assembler::addRelocation(Section *sec, s64 offset, Symbol *sym,
+                              elf::Elf_Word type, s64 addend) {
   relocations.emplace_back(
       std::make_unique<Relocation>(sec, offset, sym, type, addend));
 }
 
-ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
+ExprVal Assembler::evalFunc(const Expr &expr) {
   std::vector<ExprVal> values;
   for (const Expr &e : expr.operands) {
     ExprVal v = evalExpr(e);
@@ -902,7 +905,7 @@ ExprVal AssemblerImpl::evalFunc(const Expr &expr) {
   }
 }
 
-ExprVal AssemblerImpl::evalExpr(const Expr &expr) {
+ExprVal Assembler::evalExpr(const Expr &expr) {
   switch (expr.type) {
   case Expr::Reg:
   case Expr::Str:
@@ -942,7 +945,7 @@ ExprVal AssemblerImpl::evalExpr(const Expr &expr) {
   }
 }
 
-void AssemblerImpl::run() {
+void Assembler::run() {
   std::vector<std::string> lines;
   {
     std::fstream ifs(opts.inFile, std::ios::in | std::ios::binary);
@@ -998,14 +1001,14 @@ void AssemblerImpl::run() {
   saveToFile();
 }
 
-void AssemblerImpl::addInstr(std::unique_ptr<Statement> stmt) {
+void Assembler::addInstr(std::unique_ptr<Statement> stmt) {
   stmt->offset = curSec->offset;
   curSec->offset += 4;
   curSec->stmts.emplace_back(std::move(stmt));
 }
 
-void AssemblerImpl::addInstr(const std::string &s,
-                             const std::vector<Expr> &arguments) {
+void Assembler::addInstr(const std::string &s,
+                         const std::vector<Expr> &arguments) {
   std::unique_ptr<Statement> stmt = std::make_unique<Statement>();
   stmt->type = Statement::Instr;
   stmt->s = s;
@@ -1013,8 +1016,8 @@ void AssemblerImpl::addInstr(const std::string &s,
   addInstr(std::move(stmt));
 }
 
-void AssemblerImpl::expandInstr(const std::string &s,
-                                const std::vector<Expr> &arguments) {
+void Assembler::expandInstr(const std::string &s,
+                            const std::vector<Expr> &arguments) {
   std::unique_ptr<Statement> stmt = std::make_unique<Statement>();
   stmt->type = Statement::Instr;
   stmt->s = s;
@@ -1022,7 +1025,7 @@ void AssemblerImpl::expandInstr(const std::string &s,
   expandInstr(std::move(stmt));
 }
 
-void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
+void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
   const std::string &name = stmt->s;
 
   std::string format;
@@ -1147,20 +1150,19 @@ void AssemblerImpl::expandInstr(std::unique_ptr<Statement> stmt) {
   }
 }
 
-void AssemblerImpl::setSymbolBind(const std::string &name, unsigned char bind) {
+void Assembler::setSymbolBind(const std::string &name, unsigned char bind) {
   addSymbol(name)->sym.bind = bind;
 }
 
-void AssemblerImpl::setSymbolType(const std::string &name, unsigned char type) {
+void Assembler::setSymbolType(const std::string &name, unsigned char type) {
   addSymbol(name)->sym.type = type;
 }
 
-void AssemblerImpl::setSymbolSize(const std::string &name,
-                                  elf::Elf_Xword size) {
+void Assembler::setSymbolSize(const std::string &name, elf::Elf_Xword size) {
   addSymbol(name)->sym.size = size;
 }
 
-void AssemblerImpl::handleDirectiveSize(Statement *stmt) {
+void Assembler::handleDirectiveSize(Statement *stmt) {
   const Expr &e0 = stmt->arguments[0];
   const Expr &e1 = stmt->arguments[1];
   ExprVal v1 = evalExpr(e1);
@@ -1169,7 +1171,7 @@ void AssemblerImpl::handleDirectiveSize(Statement *stmt) {
   setSymbolSize(e0.s, v1.getI());
 }
 
-void AssemblerImpl::handleDirectiveEqu(Statement *stmt) {
+void Assembler::handleDirectiveEqu(Statement *stmt) {
   const Expr &e0 = stmt->arguments[0];
   const Expr &e1 = stmt->arguments[1];
 
@@ -1182,7 +1184,7 @@ void AssemblerImpl::handleDirectiveEqu(Statement *stmt) {
     INVALID_STATEMENT();
 }
 
-void AssemblerImpl::handleDelayedStmts() {
+void Assembler::handleDelayedStmts() {
   curSec = nullptr;
   for (std::unique_ptr<Statement> &stmt : delayedStmts) {
     const std::string &name = stmt->s;
@@ -1206,7 +1208,7 @@ void AssemblerImpl::handleDelayedStmts() {
   }
 }
 
-void AssemblerImpl::handleInstr(Statement *stmt) {
+void Assembler::handleInstr(Statement *stmt) {
   const std::string &name = stmt->s;
   rrisc32::Instr instr(name);
 
@@ -1253,7 +1255,7 @@ void AssemblerImpl::handleInstr(Statement *stmt) {
   curSec->bb.appendInt(rrisc32::encode(instr));
 }
 
-template <typename T> void AssemblerImpl::handleDirectiveD(Statement *stmt) {
+template <typename T> void Assembler::handleDirectiveD(Statement *stmt) {
   if (curSec->name == ".bss")
     return;
 
@@ -1274,7 +1276,7 @@ template <typename T> void AssemblerImpl::handleDirectiveD(Statement *stmt) {
   }
 }
 
-void AssemblerImpl::handleDirectiveAscii(Statement *stmt) {
+void Assembler::handleDirectiveAscii(Statement *stmt) {
   if (curSec->name == ".bss")
     return;
   for (const auto &expr : stmt->arguments) {
@@ -1284,7 +1286,7 @@ void AssemblerImpl::handleDirectiveAscii(Statement *stmt) {
   }
 }
 
-void AssemblerImpl::cookSections() {
+void Assembler::cookSections() {
   for (Section *sec : sections) {
     curSec = sec;
     for (std::unique_ptr<Statement> &stmt : sec->stmts) {
@@ -1343,7 +1345,7 @@ void AssemblerImpl::cookSections() {
   }
 }
 
-void AssemblerImpl::saveToFile() {
+void Assembler::saveToFile() {
   elf::RRisc32Writer writer(opts.outFile, elf::ET_REL);
 
   for (Section *sec : sections)
@@ -1367,7 +1369,7 @@ void AssemblerImpl::saveToFile() {
   writer.save();
 }
 
-void AssemblerImpl::checkCurSecName(
+void Assembler::checkCurSecName(
     const std::initializer_list<std::string> &names) {
   CHECK_CURRENT_SECTION();
   for (const std::string &name : names)
@@ -1377,14 +1379,14 @@ void AssemblerImpl::checkCurSecName(
         toString(curSec->name));
 }
 
-void AssemblerImpl::handleDirectiveSec(const std::string &name) {
+void Assembler::handleDirectiveSec(const std::string &name) {
   Section *sec = getSection(name);
   if (!sec)
     THROW(AssemblyError, "unknown section", name);
   curSec = sec;
 }
 
-void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
+void Assembler::handleDirective(std::unique_ptr<Statement> stmt) {
   const std::string &name = stmt->s;
   if (name == ".global" || name == ".local" || name == ".weak") {
     CHECK_ARGUMENTS_SIZE(1);
@@ -1549,7 +1551,7 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
   THROW(AssemblyError, "unknown directive", name);
 }
 
-void AssemblerImpl::handleLabel(std::unique_ptr<Statement> stmt) {
+void Assembler::handleLabel(std::unique_ptr<Statement> stmt) {
   CHECK_CURRENT_SECTION();
 
   stmt->offset = curSec->offset;
@@ -1566,20 +1568,20 @@ void AssemblerImpl::handleLabel(std::unique_ptr<Statement> stmt) {
   sym->set(curSec, curSec->offset);
 }
 
-Section *AssemblerImpl::getSection(const std::string &name) {
+Section *Assembler::getSection(const std::string &name) {
   for (Section *sec : sections)
     if (sec->name == name)
       return sec;
   return nullptr;
 }
 
-Symbol *AssemblerImpl::getSymbol(const std::string &name) {
+Symbol *Assembler::getSymbol(const std::string &name) {
   if (symTab.contains(name))
     return symTab[name].get();
   return nullptr;
 }
 
-Symbol *AssemblerImpl::addSymbol(const std::string &name) {
+Symbol *Assembler::addSymbol(const std::string &name) {
   assert(name != ".");
   if (!symTab.contains(name))
     symTab[name].reset(new Symbol(name));
@@ -1593,11 +1595,6 @@ Symbol *AssemblerImpl::addSymbol(const std::string &name) {
 #undef CHECK_ARGUMENTS_SIZE
 #undef CHECK_CURRENT_SECTION
 
-void Assembler::run() { AssemblerImpl(opts).run(); }
-
-void assemble(const AssemblerOpts &o) {
-  Assembler as{o};
-  as.run();
-}
+void assemble(const AssemblerOpts &o) { Assembler(o).run(); }
 
 } // namespace assembly

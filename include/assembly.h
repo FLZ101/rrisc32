@@ -150,22 +150,6 @@ struct AssemblerOpts {
   std::string outFile;
 };
 
-class Assembler {
-public:
-  explicit Assembler(AssemblerOpts o) : opts(o) {
-    if (opts.outFile.empty())
-      opts.outFile = opts.inFile + ".o";
-  }
-
-  Assembler(const Assembler &) = delete;
-  Assembler &operator=(const Assembler &) = delete;
-
-  void run();
-
-private:
-  AssemblerOpts opts;
-};
-
 void assemble(const AssemblerOpts &o);
 
 } // namespace assembly
