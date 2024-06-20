@@ -166,6 +166,18 @@ std::vector<std::string> split(const std::string &s, const std::string &sep) {
   return v;
 }
 
+bool log2(u64 x, u8 &y) {
+  y = 0;
+  if(!x)
+    return true;
+
+  while (!(x & 1)) {
+    x >>= 1;
+    ++y;
+  }
+  return x == 1;
+}
+
 s32 hi20(s32 x) { return x >> 12 & 0xfffff; }
 
 s32 lo12(s32 x) { return x & 0xfff; }

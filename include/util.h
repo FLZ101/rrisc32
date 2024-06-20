@@ -186,6 +186,8 @@ std::vector<std::string> split(const std::string &s, const std::string &sep);
 #define ALIGN(x, n) (((x) + ((n) - 1)) & ~((n) - 1))
 #define P2ALIGN(x, n) ALIGN((x), (1 << (n)))
 
+bool log2(u64 x, u8 &y);
+
 template <typename T, typename Container = std::initializer_list<T>>
 bool isOneOf(const T &x, const Container &elements) {
   for (const auto &element : elements)
@@ -239,6 +241,7 @@ public:
 
   void append(char c) { s.push_back(c); }
   void append(size_t n, char c) { s.append(n, c); }
+  void append(const char *str, size_t n) { s.append(str, n); }
 
   const std::string &getData() const { return s; }
 

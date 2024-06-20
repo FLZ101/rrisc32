@@ -114,7 +114,8 @@ void Reader::dumpELFHeader(std::ostream &os) {
      << str_machine(ei.get_machine()) << "\n"
      << dump::str_class(ei.get_class()) << "\n"
      << dump::str_endian(ei.get_encoding()) << "\n"
-     << str_os_abi(ei.get_os_abi()) << "\n";
+     << str_os_abi(ei.get_os_abi()) << "\n"
+     << toHexStr(ei.get_entry()) << "\n";
   // clang-format on
 }
 

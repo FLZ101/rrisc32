@@ -593,7 +593,6 @@ struct Section {
   s64 rep = 0;
 
   u8 align = 2;
-  static const u8 MaxAlign = 12;
 
   std::vector<std::unique_ptr<Statement>> stmts;
 
@@ -1522,7 +1521,7 @@ void Assembler::handleDirective(std::unique_ptr<Statement> stmt) {
     if (!v.isInt())
       INVALID_STATEMENT();
     s64 n = v.getI();
-    if (n > Section::MaxAlign || n < 0)
+    if (n > elf::RRISC32_MAX_ALIGN || n < 0)
       INVALID_STATEMENT();
     if (n == 0)
       return;

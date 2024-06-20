@@ -1,11 +1,11 @@
-#ifndef LINK_H
-#define LINK_H
+#ifndef LINKAGE_H
+#define LINKAGE_H
 
 #include "util.h"
 
-namespace link {
+namespace linkage {
 
-DEFINE_EXCEPTION(LinkError)
+DEFINE_EXCEPTION(LinkageError)
 
 struct LinkerOpts {
   std::vector<std::string> inFiles;
@@ -14,6 +14,6 @@ struct LinkerOpts {
 
 void link(const LinkerOpts &o);
 
-}
+} // namespace linkage
 
 #endif

@@ -26,6 +26,10 @@ const Elf_Word R_RRISC32_HI20 = 26;
 const Elf_Word R_RRISC32_LO12_I = 27;
 const Elf_Word R_RRISC32_LO12_S = 28;
 
+const u8 RRISC32_MAX_ALIGN = 12;
+const unsigned RRISC32_PAGE_SIZE = 1 << RRISC32_MAX_ALIGN;
+const Elf64_Addr RRISC32_ENTRY = RRISC32_PAGE_SIZE;
+
 struct Symbol {
   std::string name;
   Elf64_Addr value;
