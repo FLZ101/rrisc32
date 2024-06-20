@@ -2,6 +2,8 @@
 
 #include <map>
 
+#define DEBUG_TYPE "rrisc32"
+
 namespace rrisc32 {
 
 u32 Machine::ri() { return ip; }

@@ -9,7 +9,7 @@ DEFINE_EXCEPTION(LinkError)
 
 struct LinkerOpts {
   std::vector<std::string> inFiles;
-  std::string outFiles;
+  std::string outFile;
 };
 
 void link(const LinkerOpts &o);

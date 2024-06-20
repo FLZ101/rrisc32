@@ -88,7 +88,7 @@ protected:
 
 class RRisc32Reader : public Reader {
 public:
-  RRisc32Reader(std::string filename) : Reader(filename) { check(); }
+  explicit RRisc32Reader(std::string filename) : Reader(filename) { check(); }
 
   void dumpDisassembly(std::ostream &os);
   void dumpDisassembly(std::ostream &os, const section &sec);

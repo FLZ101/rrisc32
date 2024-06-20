@@ -99,14 +99,14 @@ far_away:
 
 # SEC:      Idx     Addr    Off     Size    Link    Info    AddrAli EntSize Flags   Type    Name
 # SEC-NEXT: 01      00      34      4c      00      00      01      00              STRTAB  .shstrtab
-# SEC-NEXT: 02      00      80      04a4    00      00      00      00      AE      PROGBIT .text
-# SEC-NEXT: 03      00      0524    0404    00      00      00      00      A       PROGBIT .rodata
-# SEC-NEXT: 04      00      0928    00      00      00      00      00      AW      PROGBIT .data
-# SEC-NEXT: 05      00      0928    00      00      00      00      00      AW      NOBITS  .bss
-# SEC-NEXT: 06      00      0928    70      07      05      00      10              SYMTAB  .symtab
-# SEC-NEXT: 07      00      0998    31      00      00      00      00              STRTAB  .strtab
-# SEC-NEXT: 08      00      09c9    78      06      02      00      0c              RELA    .rela.text
-# SEC-NEXT: 09      00      0a41    0c      06      03      00      0c              RELA    .rela.rodata
+# SEC-NEXT: 02      00      0400    04a4    00      00      0400    00      AE      PROGBIT .text
+# SEC-NEXT: 03      00      0c00    0404    00      00      0400    00      A       PROGBIT .rodata
+# SEC-NEXT: 04      00      1004    00      00      00      04      00      AW      PROGBIT .data
+# SEC-NEXT: 05      00      1004    00      00      00      04      00      AW      NOBITS  .bss
+# SEC-NEXT: 06      00      1004    70      07      05      00      10              SYMTAB  .symtab
+# SEC-NEXT: 07      00      1074    31      00      00      00      00              STRTAB  .strtab
+# SEC-NEXT: 08      00      10a5    78      06      02      00      0c              RELA    .rela.text
+# SEC-NEXT: 09      00      111d    0c      06      03      00      0c              RELA    .rela.rodata
 
 # SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
 # SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND

@@ -2,6 +2,8 @@
 
 #include "rrisc32.h"
 
+#define DEBUG_TYPE "elf"
+
 namespace elf {
 
 void getSymbol(const elfio &ei, section *sec, Elf_Xword idx, Symbol &sym) {
@@ -370,7 +372,17 @@ void RRisc32Reader::check() {
   checkRelocations();
 }
 
+#define UNEXPECTED_SECTION_NAME(name)                                          \
+  THROW(ELFError, "unexpected section name", escape(name))
+
 void RRisc32Reader::checkSections() {
+  forEachSection([this](section &sec) {
+    std::string name = sec.get_name();
+    if (name.empty())
+      return;
+    if (!isOneOf(name, secNames))
+      UNEXPECTED_SECTION_NAME(name);
+  });
   checkSection(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR);
   checkSection(".rodata", SHT_PROGBITS, SHF_ALLOC);
   checkSection(".data", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE);
@@ -502,7 +514,7 @@ section *RRisc32Writer::getSection(const std::string &name) {
   }
   if (name == ".strtab")
     return addSection(name, SHT_STRTAB, 0);
-  THROW(ELFError, "unexpected section name", name);
+  UNEXPECTED_SECTION_NAME(name);
 }
 
 Elf_Word RRisc32Writer::addString(const std::string &s) {

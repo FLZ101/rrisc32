@@ -592,7 +592,8 @@ struct Section {
   s64 size = 0;
   s64 rep = 0;
 
-  static const u8 Alignment = 12;
+  u8 align = 2;
+  static const u8 MaxAlign = 12;
 
   std::vector<std::unique_ptr<Statement>> stmts;
 
@@ -719,7 +720,10 @@ std::ostream &operator<<(std::ostream &os, const ExprVal &v) {
 
 class Assembler {
 public:
-  Assembler(AssemblerOpts o) : opts(o) {}
+  Assembler(AssemblerOpts o) : opts(o) {
+    if (opts.outFile.empty())
+      opts.outFile = opts.inFile + ".o";
+  }
 
   Assembler(const Assembler &) = delete;
   Assembler &operator=(const Assembler &) = delete;
@@ -1348,8 +1352,11 @@ void Assembler::cookSections() {
 void Assembler::saveToFile() {
   elf::RRisc32Writer writer(opts.outFile, elf::ET_REL);
 
-  for (Section *sec : sections)
-    writer.getSection(sec->name)->set_data(sec->bb.getData());
+  for (Section *sec : sections) {
+    elf::section *s = writer.getSection(sec->name);
+    s->set_data(sec->bb.getData());
+    s->set_addr_align(1 << sec->align);
+  }
 
   for (auto &name : symTab.keys()) {
     Symbol *sym = symTab[name].get();
@@ -1515,7 +1522,7 @@ void Assembler::handleDirective(std::unique_ptr<Statement> stmt) {
     if (!v.isInt())
       INVALID_STATEMENT();
     s64 n = v.getI();
-    if (n > Section::Alignment || n < 0)
+    if (n > Section::MaxAlign || n < 0)
       INVALID_STATEMENT();
     if (n == 0)
       return;
@@ -1533,6 +1540,8 @@ void Assembler::handleDirective(std::unique_ptr<Statement> stmt) {
       curSec->offset = P2ALIGN(curSec->offset, n);
       curSec->stmts.emplace_back(std::move(stmt));
     }
+    if (n > curSec->align)
+      curSec->align = n;
     return;
   }
 
