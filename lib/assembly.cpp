@@ -738,6 +738,8 @@ private:
 
   template <typename T> void handleDirectiveD(Statement *stmt);
   void handleDirectiveAscii(Statement *stmt);
+  void handleDirectiveEqu(Statement *stmt);
+  void handleDirectiveSize(Statement *stmt);
 
   void handleDelayedStmts();
 
@@ -1158,6 +1160,28 @@ void AssemblerImpl::setSymbolSize(const std::string &name,
   addSymbol(name)->sym.size = size;
 }
 
+void AssemblerImpl::handleDirectiveSize(Statement *stmt) {
+  const Expr &e0 = stmt->arguments[0];
+  const Expr &e1 = stmt->arguments[1];
+  ExprVal v1 = evalExpr(e1);
+  if (!v1.isInt() || v1.getI() < 0)
+    INVALID_STATEMENT();
+  setSymbolSize(e0.s, v1.getI());
+}
+
+void AssemblerImpl::handleDirectiveEqu(Statement *stmt) {
+  const Expr &e0 = stmt->arguments[0];
+  const Expr &e1 = stmt->arguments[1];
+
+  ExprVal v1 = evalExpr(e1);
+  if (v1.isInt())
+    addSymbol(e0.s)->set(v1.getI());
+  else if (v1.isSym())
+    addSymbol(e0.s)->set(v1.getSec(), v1.getOffset());
+  else
+    INVALID_STATEMENT();
+}
+
 void AssemblerImpl::handleDelayedStmts() {
   curSec = nullptr;
   for (std::unique_ptr<Statement> &stmt : delayedStmts) {
@@ -1173,24 +1197,9 @@ void AssemblerImpl::handleDelayedStmts() {
       const Expr &e1 = stmt->arguments[1];
       setSymbolType(e0.s, e1.s == "function" ? elf::STT_FUNC : elf::STT_OBJECT);
     } else if (name == ".size") {
-      const Expr &e0 = stmt->arguments[0];
-      const Expr &e1 = stmt->arguments[1];
-      ExprVal v1 = evalExpr(e1);
-      if (!v1.isInt() || v1.getI() < 0)
-        INVALID_STATEMENT();
-      setSymbolSize(e0.s, v1.getI());
+      handleDirectiveSize(stmt.get());
     } else if (name == ".equ") {
-      const Expr &e0 = stmt->arguments[0];
-      const Expr &e1 = stmt->arguments[1];
-
-      ExprVal v1 = evalExpr(e1);
-      if (v1.isInt()) {
-        addSymbol(e0.s)->set(v1.getI());
-      } else if (v1.isSym()) {
-        addSymbol(e0.s)->set(v1.getSec(), v1.getOffset());
-      } else {
-        INVALID_STATEMENT();
-      }
+      handleDirectiveEqu(stmt.get());
     } else {
       UNREACHABLE();
     }
@@ -1322,6 +1331,10 @@ void AssemblerImpl::cookSections() {
               P2ALIGN(stmt->offset, evalExpr(stmt->arguments[0]).getI()) -
               stmt->offset;
           curSec->bb.append(repeat, '\0');
+        } else if (name == ".equ") {
+          handleDirectiveEqu(stmt.get());
+        } else if (name == ".size") {
+          handleDirectiveSize(stmt.get());
         } else {
           UNREACHABLE();
         }
@@ -1394,7 +1407,12 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
   if (name == ".size") {
     CHECK_ARGUMENTS_SIZE(2);
     CHECK_ARGUMENT_TYPE(0, Expr::Sym);
-    delayedStmts.emplace_back(std::move(stmt));
+    if (curSec) {
+      stmt->offset = curSec->offset;
+      curSec->stmts.emplace_back(std::move(stmt));
+    } else {
+      delayedStmts.emplace_back(std::move(stmt));
+    }
     return;
   }
   if (name == ".equ") {
@@ -1406,13 +1424,15 @@ void AssemblerImpl::handleDirective(std::unique_ptr<Statement> stmt) {
       THROW(AssemblyError, "can not define .");
 
     ExprVal v1 = evalExpr(e1);
-    if (v1.isInt()) {
+    if (v1.isInt())
       addSymbol(e0.s)->set(v1.getI());
-    } else if (v1.isSym()) {
+    else if (v1.isSym())
       addSymbol(e0.s)->set(v1.getSec(), v1.getOffset());
-    } else {
-      delayedStmts.emplace_front(std::move(stmt));
-    }
+    else if (curSec) {
+      stmt->offset = curSec->offset;
+      curSec->stmts.emplace_back(std::move(stmt));
+    } else
+      delayedStmts.emplace_back(std::move(stmt));
     return;
   }
 
