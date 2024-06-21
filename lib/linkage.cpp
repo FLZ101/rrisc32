@@ -10,7 +10,10 @@
 namespace linkage {
 
 struct InputSection {
+  InputSection(elf::section *sec) : sec(sec) {}
+
   elf::section *sec = nullptr;
+  u64 addr = 0;
 };
 
 struct OutputSection {
@@ -22,6 +25,63 @@ struct OutputSection {
   const std::string name;
   u64 addr = 0;
   ByteBuffer bb;
+};
+
+struct OutputSymbol {
+  OutputSymbol(const elf::Symbol &sym) : sym(sym) {}
+
+  elf::Symbol sym;
+  OutputSection *oSec = nullptr;
+};
+
+struct OutputRelocation {
+  OutputRelocation(const elf::Relocation &rel) : rel(rel) {}
+
+  elf::Relocation rel;
+  OutputSection *oSec = nullptr;
+  OutputSymbol *oSym = nullptr;
+};
+
+struct Reader : elf::RRisc32Reader {
+  Reader(const std::string &name) : elf::RRisc32Reader(name) {
+    forEachSection([this](elf::section &sec) {
+      if (sec.get_name().empty())
+        return;
+      iSecs.emplace_back(std::move(std::make_unique<InputSection>(&sec)));
+    });
+    forEachSymbol([this](const elf::Symbol &sym) {
+      oSyms.emplace_back(std::move(std::make_unique<OutputSymbol>(sym)));
+    });
+    forEachRelocation([this](const elf::Relocation &rel) {
+      oRels.emplace_back(std::move(std::make_unique<OutputRelocation>(rel)));
+    });
+  }
+
+  OutputSymbol *getOSym(OutputRelocation *oRel) { return getOSym(oRel->rel); }
+
+  OutputSymbol *getOSym(const elf::Relocation &rel) {
+    return getOSym(getSymTabSecIdx(rel), rel.sym);
+  }
+
+  OutputSymbol *getOSym(elf::Elf_Half secIdx, elf::Elf_Word symIdx) {
+    for (auto &oSym : oSyms)
+      if (oSym->sym.secBelongTo == secIdx && oSym->sym.idx == symIdx)
+        return oSym.get();
+    return nullptr;
+  }
+
+  InputSection *getISec(elf::section *sec) { return getISec(sec->get_name()); }
+
+  InputSection *getISec(const std::string &name) {
+    for (auto &iSec : iSecs)
+      if (iSec->sec->get_name() == name)
+        return iSec.get();
+    return nullptr;
+  }
+
+  std::vector<std::unique_ptr<InputSection>> iSecs;
+  std::vector<std::unique_ptr<OutputSymbol>> oSyms;
+  std::vector<std::unique_ptr<OutputRelocation>> oRels;
 };
 
 class Linker {
@@ -36,46 +96,32 @@ public:
 private:
   void saveToFile();
 
+  void linkSymbols();
+  void concatenateISecs();
+
+  OutputSection *getOSec(elf::section *sec) { return getOSec(sec->get_name()); }
+
   OutputSection *getOSec(const std::string &name);
 
-  u64 offset = elf::RRISC32_ENTRY;
+  std::map<std::string, OutputSymbol *> gSyms;
 
   OutputSection oSecText{".text"};
   OutputSection oSecRodata{".rodata"};
   OutputSection oSecData{".data"};
   OutputSection oSecBss{".bss"};
 
-  OutputSection *oSections[4] = {&oSecText, &oSecRodata, &oSecData, &oSecBss};
+  OutputSection *oSecs[4] = {&oSecText, &oSecRodata, &oSecData, &oSecBss};
 
-  std::list<std::unique_ptr<elf::RRisc32Reader>> readers;
+  u64 offset = elf::RRISC32_ENTRY;
+
+  std::list<std::unique_ptr<Reader>> readers;
 
   LinkerOpts opts;
 };
 
-OutputSection *Linker::getOSec(const std::string &name) {
-  for (auto *oSec : oSections)
-    if (oSec->name == name) {
-      if (!oSec->addr) {
-        offset = P2ALIGN(offset, elf::RRISC32_MAX_ALIGN);
-        oSec->addr = offset;
-      }
-      return oSec;
-    }
-  THROW(LinkageError, "unexpected section name", name);
-}
-
 /*
-for name in .text, .rodata, .data, .bss
-  for each reader
-    if has name
-      create sec (max_align) if not
-      align by reader align
-      add reader sec
-        set sec addr
 
-for each reader
-  map symbols
-    value += sec addr
+resolve symbols
 
 apply relocations
   resolve symbol
@@ -98,26 +144,93 @@ void Linker::saveToFile() {
   elf::RRisc32Writer writer(opts.outFile, elf::ET_EXEC);
 }
 
-void Linker::run() {
-  for (const std::string &filename : opts.inFiles)
-    readers.emplace_back(
-        std::move(std::make_unique<elf::RRisc32Reader>(filename)));
+void Linker::linkSymbols() {
+  for (auto &reader : readers) {
+    for (auto &oSym : reader->oSyms) {
+    }
+    reader->forEachSymbol([this, &reader](const elf::Symbol &sym) {
+      if (sym.sec == elf::SHN_UNDEF)
+        return;
+      const std::string &name = sym.name;
+      switch (sym.bind) {
+      case elf::STB_GLOBAL:
+        if (gSym && gSym->sym.bind != elf::STB_WEAK)
+          THROW(LinkageError, "redefined symbol", sym.name);
+        gSym = addGSym(&reader->getEI(), sym);
+        break;
+      case elf::STB_WEAK:
+        if (!gSym)
+          gSym = addGSym(&reader->getEI(), sym);
+        break;
+      case elf::STB_LOCAL:
+        break;
+      default:
+        THROW(LinkageError, elf::dump::str_symbol_bind(sym.bind));
+      }
+    });
+  }
 
+  for (const auto &reader : readers) {
+    reader->forEachSymbol([this, &reader](const elf::Symbol &sym) {});
+  }
+}
+
+void Linker::concatenateISecs() {
   for (const std::string &name : {".text", ".rodata", ".data", ".bss"}) {
-    for (const auto &reader : readers) {
-      elf::section *sec = reader->getSection(name);
-      if (!sec)
+    for (auto &reader : readers) {
+      InputSection *iSec = reader->getISec(name);
+      if (!iSec)
         continue;
+      elf::section *sec = iSec->sec;
+
       u8 n = 0;
       if (!log2(sec->get_addr_align(), n) || n > elf::RRISC32_MAX_ALIGN)
         THROW(LinkageError, "invalid section alignment", sec->get_addr_align());
       offset = P2ALIGN(offset, n);
-      sec->set_address(offset);
+      iSec->addr = offset;
 
       getOSec(name)->bb.append(sec->get_data(), sec->get_size());
       offset += sec->get_size();
     }
   }
+
+  // map symbols and relocations
+  for (auto &reader : readers) {
+    for (auto &oSym : reader->oSyms) {
+      elf::section *sec = reader->getSection(oSym->sym);
+      if (!sec)
+        continue;
+      oSym->oSec = getOSec(sec);
+      oSym->sym.value += reader->getISec(sec)->addr;
+    }
+    for (auto &oRel : reader->oRels) {
+      elf::section *sec = reader->getSection(oRel->rel);
+      oRel->oSec = getOSec(sec);
+      oRel->rel.offset += reader->getISec(sec)->addr;
+      oRel->oSym = reader->getOSym(oRel.get());
+    }
+  }
+
+  // map relocations
+}
+
+OutputSection *Linker::getOSec(const std::string &name) {
+  for (auto *oSec : oSecs)
+    if (oSec->name == name) {
+      if (!oSec->addr) {
+        offset = P2ALIGN(offset, elf::RRISC32_MAX_ALIGN);
+        oSec->addr = offset;
+      }
+      return oSec;
+    }
+  THROW(LinkageError, "unexpected section name", name);
+}
+
+void Linker::run() {
+  for (const std::string &filename : opts.inFiles)
+    readers.emplace_back(std::move(std::make_unique<Reader>(filename)));
+
+  concatenateISecs();
 }
 
 void link(const LinkerOpts &o) { Linker(o).run(); }

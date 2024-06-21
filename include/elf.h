@@ -53,6 +53,10 @@ struct Relocation {
   Elf_Half secBelongTo;
 };
 
+void getSymbol(const elfio &ei, section *sec, Elf_Xword idx, Symbol &sym);
+void getRelocation(const elfio &ei, section *sec, Elf_Xword idx,
+                   Relocation &rel);
+
 class Reader {
 public:
   using SegFn = std::function<void(segment &)>;
@@ -65,6 +69,25 @@ public:
   const elfio &getEI() const;
 
   void forEachSegment(SegFn fn);
+
+  section *getSection(const Symbol &sym) {
+    if (0 <= sym.sec && sym.sec < ei.sections.size())
+      return ei.sections[sym.sec];
+    return nullptr;
+  }
+
+  section *getSection(const Relocation &rel) {
+    section *secBeTo = ei.sections[rel.secBelongTo];
+    return ei.sections[secBeTo->get_info()];
+  }
+
+  Elf_Word getSymTabSecIdx(const Relocation &rel) {
+    return ei.sections[rel.secBelongTo]->get_link();
+  }
+
+  section *getSymTabSec(const Relocation &rel) {
+    return ei.sections[getSymTabSecIdx(rel)];
+  }
 
   section *getSection(const std::string &name);
   void forEachSection(SecFn fn);
@@ -92,7 +115,9 @@ protected:
 
 class RRisc32Reader : public Reader {
 public:
-  explicit RRisc32Reader(std::string filename) : Reader(filename) { check(); }
+  explicit RRisc32Reader(const std::string &filename) : Reader(filename) {
+    check();
+  }
 
   void dumpDisassembly(std::ostream &os);
   void dumpDisassembly(std::ostream &os, const section &sec);
