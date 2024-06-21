@@ -1,4 +1,5 @@
 # RUN: assemble -o %t %s
+# RUN: dump --dis .text %t | filecheck %s --check-prefix=TEXT
 # RUN: dump --sym %t | filecheck %s --check-prefix=SYM
 # RUN: dump --rel %t | filecheck %s --check-prefix=REL
 
@@ -19,6 +20,29 @@ g:
 
   .data
   .dw $g, +($f -8), +($foo 8)
+
+# TEXT:      [ Disassembly/.text ]
+# TEXT-NEXT: 00000000  addi x0, x0, 0
+# TEXT-NEXT: 00000004  addi x0, x0, 0
+# TEXT-NEXT: 00000008  addi x0, x0, 0
+# TEXT-NEXT: 0000000c  addi x0, x0, 0
+# TEXT-NEXT: 00000010  addi x0, x0, 0
+# TEXT-NEXT: 00000014  addi x0, x0, 0
+# TEXT-NEXT: 00000018  addi x0, x0, 0
+# TEXT-NEXT: 0000001c  addi x0, x0, 0
+# TEXT-NEXT: 00000020  addi x0, x0, 0
+# TEXT-NEXT: 00000024  addi x0, x0, 0
+# TEXT-NEXT: 00000028  add x1, x2, x3
+# TEXT-NEXT: 0000002c  jalr x0, x1, 0
+# TEXT-NEXT: 00000030  lui x1, 0
+# TEXT-NEXT: 00000034  jalr x1, x1, 0
+# TEXT-NEXT: 00000038  jalr x0, x1, 0
+# TEXT-NEXT: 0000003c  lui x1, 0
+# TEXT-NEXT: 00000040  jalr x1, x1, 0
+# TEXT-NEXT: 00000044  lui x1, 0
+# TEXT-NEXT: 00000048  jalr x1, x1, 0
+# TEXT-NEXT: 0000004c  lui x1, 0
+# TEXT-NEXT: 00000050  jalr x1, x1, 0
 
 # SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
 # SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
