@@ -118,14 +118,14 @@ far_away:
 # SYM-NEXT: 06      06      0400    00      GLOBAL  NOTYPE  DEF     03      far_away
 
 # REL:      SecBeTo Idx     Offset  Type    Addend  Sym     SecSym  SecRel
-# REL-NEXT: 08      00      040c    HI20    00      06      06      02
-# REL-NEXT: 08      01      0410    LO12_I  00      06      06      02
-# REL-NEXT: 08      02      041c    HI20    00      06      06      02
-# REL-NEXT: 08      03      0420    LO12_I  00      06      06      02
-# REL-NEXT: 08      04      042c    HI20    00      06      06      02
-# REL-NEXT: 08      05      0430    LO12_S  00      06      06      02
-# REL-NEXT: 08      06      0494    HI20    00      05      06      02
-# REL-NEXT: 08      07      0498    LO12_I  00      05      06      02
-# REL-NEXT: 08      08      049c    HI20    00      05      06      02
-# REL-NEXT: 08      09      04a0    LO12_I  00      05      06      02
-# REL-NEXT: 09      00      0400    32      00      05      06      03
+# REL-NEXT: 08      00      040c    HI20    0       06      06      02
+# REL-NEXT: 08      01      0410    LO12_I  0       06      06      02
+# REL-NEXT: 08      02      041c    HI20    0       06      06      02
+# REL-NEXT: 08      03      0420    LO12_I  0       06      06      02
+# REL-NEXT: 08      04      042c    HI20    0       06      06      02
+# REL-NEXT: 08      05      0430    LO12_S  0       06      06      02
+# REL-NEXT: 08      06      0494    HI20    0       05      06      02
+# REL-NEXT: 08      07      0498    LO12_I  0       05      06      02
+# REL-NEXT: 08      08      049c    HI20    0       05      06      02
+# REL-NEXT: 08      09      04a0    LO12_I  0       05      06      02
+# REL-NEXT: 09      00      0400    32      0       05      06      03

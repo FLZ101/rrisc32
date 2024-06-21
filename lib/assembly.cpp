@@ -665,19 +665,21 @@ struct Relocation {
 
 class ExprVal {
 public:
-  enum Type { Invalid, Int, Sym, Undef, Rel };
+  enum Type { Invalid, Int, Sym, Rel };
 
   ExprVal() {}
 
   explicit ExprVal(s64 i) : offset(i), type(Int) {}
 
   ExprVal(Section *sec, s64 offset, Symbol *sym = nullptr)
-      : sec(sec), offset(offset), sym(sym), type(Sym) {}
+      : sec(sec), offset(offset), sym(sym), type(Sym) {
+    assert(sec || sym);
+  }
 
-  explicit ExprVal(Symbol *sym) : sym(sym), type(Undef) { assert(sym); }
+  explicit ExprVal(Symbol *sym) : ExprVal(nullptr, 0, sym) { assert(sym); }
 
-  ExprVal(elf::Elf_Word relType, Symbol *sym)
-      : relType(relType), sym(sym), type(Rel) {}
+  ExprVal(elf::Elf_Word relType, Symbol *sym, s64 addend = 0)
+      : relType(relType), sym(sym), addend(addend), type(Rel) {}
 
   bool isValid() const { return type != Invalid; }
 
@@ -688,12 +690,13 @@ public:
   Section *getSec() const { return sec; }
   s64 getOffset() const { return offset; }
 
-  Symbol *getSym() const { return sym; }
+  bool isUndef() const { return isSym() && !sec; }
 
-  bool isUndef() const { return type == Undef; }
+  Symbol *getSym() const { return sym; }
 
   bool isRel() const { return type == Rel; }
   elf::Elf_Word getRelType() const { return relType; }
+  s64 getAddend() const { return addend; }
 
 private:
   Type type = Invalid;
@@ -704,6 +707,7 @@ private:
   Symbol *sym = nullptr;
 
   elf::Elf_Word relType = elf::R_RRISC32_NONE;
+  s64 addend = 0;
 };
 
 std::ostream &operator<<(std::ostream &os, const ExprVal &v) {
@@ -754,6 +758,20 @@ private:
   void cookRelocations();
 
   void saveToFile();
+
+  ExprVal cvtSymToRel(const ExprVal &v, elf::Elf_Word relType) {
+    assert(v.isSym());
+    Symbol *sym = v.getSym();
+    if (v.isUndef()) {
+      assert(sym);
+      return ExprVal(relType, sym, v.getOffset());
+    }
+    assert(v.getSec());
+    if (!sym)
+      sym = addSymbol(v.getSec()->name);
+    assert(v.getSec() == sym->sec);
+    return ExprVal(relType, sym, v.getOffset() - sym->offset);
+  }
 
   ExprVal evalExpr(const Expr &expr);
   ExprVal evalFunc(const Expr &expr);
@@ -833,7 +851,7 @@ ExprVal Assembler::evalFunc(const Expr &expr) {
   std::vector<ExprVal> values;
   for (const Expr &e : expr.operands) {
     ExprVal v = evalExpr(e);
-    if (!v.isInt() && !v.isSym() && !v.isUndef())
+    if (!v.isInt() && !v.isSym())
       return ExprVal();
     values.push_back(v);
   }
@@ -845,23 +863,23 @@ ExprVal Assembler::evalFunc(const Expr &expr) {
       if (v.isInt())
         return ExprVal(-v.getI());
       return ExprVal();
-    } else {
-      CHECK_OPERANDS_SIZE(2);
-      ExprVal v0 = values[0];
-      ExprVal v1 = values[1];
-      if (v0.isSym() && v1.isSym()) {
-        if (v0.getSec() == v1.getSec())
-          return ExprVal(v0.getOffset() - v1.getOffset());
-        return ExprVal();
-      }
-      if (v0.isSym() && v1.isInt())
-        return ExprVal(v0.getSec(), v0.getOffset() - v1.getI());
-      if (v0.isInt() && v1.isSym())
-        return ExprVal();
-      if (v0.isInt() && v1.isInt())
-        return ExprVal(v0.getI() - v1.getI());
+    }
+    CHECK_OPERANDS_SIZE(2);
+    ExprVal v0 = values[0];
+    ExprVal v1 = values[1];
+    if (v0.isSym() && v1.isSym()) {
+      if (v0.getSec() == v1.getSec())
+        return ExprVal(v0.getOffset() - v1.getOffset());
       return ExprVal();
     }
+
+    if (v0.isSym() && v1.isInt())
+      return ExprVal(v0.getSec(), v0.getOffset() - v1.getI(), v0.getSym());
+    if (v0.isInt() && v1.isSym())
+      return ExprVal();
+    if (v0.isInt() && v1.isInt())
+      return ExprVal(v0.getI() - v1.getI());
+    return ExprVal();
   } else if (name == "+") {
     CHECK_OPERANDS_SIZE(2);
     ExprVal v0 = values[0];
@@ -869,9 +887,9 @@ ExprVal Assembler::evalFunc(const Expr &expr) {
     if (v0.isInt() && v1.isInt())
       return ExprVal(v0.getI() + v1.getI());
     if (v0.isInt() && v1.isSym())
-      return ExprVal(v1.getSec(), v0.getI() + v1.getOffset());
+      return ExprVal(v1.getSec(), v0.getI() + v1.getOffset(), v1.getSym());
     if (v0.isSym() && v1.isInt())
-      return ExprVal(v0.getSec(), v0.getOffset() + v1.getI());
+      return ExprVal(v0.getSec(), v0.getOffset() + v1.getI(), v0.getSym());
     return ExprVal();
   } else if (name.size() == 1 && isOneOf(name[0], "*/")) {
     CHECK_OPERANDS_SIZE(2);
@@ -897,12 +915,12 @@ ExprVal Assembler::evalFunc(const Expr &expr) {
     if (v.isInt())
       return ExprVal(name == "hi" ? hi20(v.getI()) : lo12(v.getI()));
 
-    if (v.getSym()) {
-      elf::Elf_Word relType =
-          name == "hi" ? elf::R_RRISC32_HI20 : elf::R_RRISC32_LO12_I;
-      return ExprVal(relType, v.getSym());
-    }
-    return ExprVal();
+    if (!v.isSym())
+      return ExprVal();
+
+    elf::Elf_Word relType =
+        name == "hi" ? elf::R_RRISC32_HI20 : elf::R_RRISC32_LO12_I;
+    return cvtSymToRel(v, relType);
   } else {
     THROW(AssemblyError, "unimplemented Func ", escape(name));
   }
@@ -1249,7 +1267,7 @@ void Assembler::handleInstr(Statement *stmt) {
       elf::Elf_Word relType = v.getRelType();
       if (relType == elf::R_RRISC32_LO12_I && isOneOf(name, {"sb", "sh", "sw"}))
         relType = elf::R_RRISC32_LO12_S;
-      addRelocation(curSec, stmt->offset, v.getSym(), relType);
+      addRelocation(curSec, stmt->offset, v.getSym(), relType, v.getAddend());
     } else {
       INVALID_STATEMENT();
     }
@@ -1264,12 +1282,13 @@ template <typename T> void Assembler::handleDirectiveD(Statement *stmt) {
 
   for (const auto &expr : stmt->arguments) {
     ExprVal v = evalExpr(expr);
-    if (v.isSym() || v.isUndef()) {
+    if (v.isSym()) {
       if (sizeof(T) < 4)
         INVALID_STATEMENT("size is too small", sizeof(T));
-      if (!v.getSym())
-        INVALID_STATEMENT("no symbol", sizeof(T));
-      addRelocation(curSec, curSec->bb.size(), v.getSym(), elf::R_RRISC32_32);
+
+      ExprVal vRel = cvtSymToRel(v, elf::R_RRISC32_32);
+      addRelocation(curSec, curSec->bb.size(), vRel.getSym(), vRel.getRelType(),
+                    vRel.getAddend());
       curSec->bb.appendInt(static_cast<T>(0));
       continue;
     }

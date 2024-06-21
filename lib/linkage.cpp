@@ -96,6 +96,7 @@ public:
 private:
   void saveToFile();
 
+  void applyRelocations();
   void linkSymbols();
   void concatenateISecs();
 
@@ -144,34 +145,45 @@ void Linker::saveToFile() {
   elf::RRisc32Writer writer(opts.outFile, elf::ET_EXEC);
 }
 
+void Linker::applyRelocations() {
+  for (auto &reader : readers) {
+    for (auto &oRel : reader->oRels) {
+
+    }
+  }
+}
+
 void Linker::linkSymbols() {
   for (auto &reader : readers) {
     for (auto &oSym : reader->oSyms) {
-    }
-    reader->forEachSymbol([this, &reader](const elf::Symbol &sym) {
+      const elf::Symbol &sym = oSym->sym;
       if (sym.sec == elf::SHN_UNDEF)
-        return;
+        continue;
       const std::string &name = sym.name;
       switch (sym.bind) {
       case elf::STB_GLOBAL:
-        if (gSym && gSym->sym.bind != elf::STB_WEAK)
-          THROW(LinkageError, "redefined symbol", sym.name);
-        gSym = addGSym(&reader->getEI(), sym);
+        if (gSyms.contains(name) && gSyms[name]->sym.bind != elf::STB_WEAK)
+          THROW(LinkageError, "redefined symbol", name);
+        gSyms[name] = oSym.get();
         break;
       case elf::STB_WEAK:
-        if (!gSym)
-          gSym = addGSym(&reader->getEI(), sym);
+        if (!gSyms.contains(name))
+          gSyms[name] = oSym.get();
         break;
       case elf::STB_LOCAL:
         break;
       default:
         THROW(LinkageError, elf::dump::str_symbol_bind(sym.bind));
       }
-    });
+    }
   }
 
-  for (const auto &reader : readers) {
-    reader->forEachSymbol([this, &reader](const elf::Symbol &sym) {});
+  for (auto &reader : readers) {
+    for (auto &oSym : reader->oSyms) {
+      const elf::Symbol &sym = oSym->sym;
+      if (sym.sec == elf::SHN_UNDEF && !gSyms.contains(sym.name))
+        THROW(LinkageError, "undefined symbol", sym.name);
+    }
   }
 }
 
@@ -202,16 +214,16 @@ void Linker::concatenateISecs() {
         continue;
       oSym->oSec = getOSec(sec);
       oSym->sym.value += reader->getISec(sec)->addr;
+      oSym->sym.value -= oSym->oSec->addr;
     }
     for (auto &oRel : reader->oRels) {
       elf::section *sec = reader->getSection(oRel->rel);
       oRel->oSec = getOSec(sec);
       oRel->rel.offset += reader->getISec(sec)->addr;
+      oRel->rel.offset -= oRel->oSec->addr;
       oRel->oSym = reader->getOSym(oRel.get());
     }
   }
-
-  // map relocations
 }
 
 OutputSection *Linker::getOSec(const std::string &name) {
@@ -231,6 +243,7 @@ void Linker::run() {
     readers.emplace_back(std::move(std::make_unique<Reader>(filename)));
 
   concatenateISecs();
+  linkSymbols();
 }
 
 void link(const LinkerOpts &o) { Linker(o).run(); }

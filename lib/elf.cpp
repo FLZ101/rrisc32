@@ -279,7 +279,7 @@ void Reader::dumpRelocations(std::ostream &os) {
        << toHexStr(rel.idx) << "\t"
        << toHexStr(rel.offset) << "\t"
        << str_relocation_type(rel.type) << "\t"
-       << toHexStr(rel.addend) << "\t"
+       << rel.addend << "\t"
        << toHexStr(rel.sym) << "\t"
        << toHexStr(ei.sections[rel.secBelongTo]->get_link()) << "\t"
        << toHexStr(ei.sections[rel.secBelongTo]->get_info()) << "\n";
