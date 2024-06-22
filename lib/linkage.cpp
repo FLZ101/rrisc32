@@ -17,18 +17,37 @@ struct InputSection {
 };
 
 struct OutputSection {
-  explicit OutputSection(const std::string &name) : name(name) {}
+  explicit OutputSection(const std::string &name) { sym.name = name; }
 
   OutputSection(const OutputSection &) = delete;
   OutputSection &operator=(const OutputSection &) = delete;
 
-  const std::string name;
+  elf::Symbol sym = {.name = "",
+                     .value = 0,
+                     .size = 0,
+                     .type = elf::STT_SECTION,
+                     .bind = elf::STB_LOCAL,
+                     .other = elf::STV_DEFAULT,
+                     .sec = elf::SHN_UNDEF};
+
   u64 addr = 0;
   ByteBuffer bb;
+
+  elf::section *sec = nullptr;
 };
 
 struct OutputSymbol {
   OutputSymbol(const elf::Symbol &sym) : sym(sym) {}
+
+  u64 getValue() const {
+    assert(sym.sec != elf::SHN_UNDEF);
+    if (sym.sec == elf::SHN_ABS)
+      return sym.value;
+    if (sym.bind == elf::STB_WEAK)
+      return 0;
+    assert(oSec);
+    return oSec->addr + sym.value;
+  }
 
   elf::Symbol sym;
   OutputSection *oSec = nullptr;
@@ -36,6 +55,8 @@ struct OutputSymbol {
 
 struct OutputRelocation {
   OutputRelocation(const elf::Relocation &rel) : rel(rel) {}
+
+  char *getAddr() { return oSec->bb.getData().data() + rel.offset; }
 
   elf::Relocation rel;
   OutputSection *oSec = nullptr;
@@ -50,6 +71,8 @@ struct Reader : elf::RRisc32Reader {
       iSecs.emplace_back(std::move(std::make_unique<InputSection>(&sec)));
     });
     forEachSymbol([this](const elf::Symbol &sym) {
+      if (sym.name.empty())
+        return;
       oSyms.emplace_back(std::move(std::make_unique<OutputSymbol>(sym)));
     });
     forEachRelocation([this](const elf::Relocation &rel) {
@@ -120,35 +143,100 @@ private:
   LinkerOpts opts;
 };
 
-/*
-
-resolve symbols
-
-apply relocations
-  resolve symbol
-    local ?
-    weak ?
-    global ?
-
-  sec, offset, symbol (value)
-
-add symbols
-
-create segments
-  .text
-  .rodata
-  .data
-  .bss
-*/
-
 void Linker::saveToFile() {
   elf::RRisc32Writer writer(opts.outFile, elf::ET_EXEC);
+
+  for (OutputSection *oSec : oSecs) {
+    oSec->sec = writer.getSection(oSec->sym.name);
+    oSec->sec->set_address(oSec->addr);
+    oSec->sec->set_addr_align(elf::RRISC32_PAGE_SIZE);
+    if (oSec->sym.name != ".bss")
+      oSec->sec->set_data(oSec->bb.getData());
+    else
+      oSec->sec->set_size(oSec->sym.size);
+
+    oSec->sym.sec = oSec->sec->get_index();
+  }
+
+  writer.getEI().set_entry(elf::RRISC32_ENTRY);
+
+  for (OutputSection *oSec : oSecs)
+    writer.addSymbol(&oSec->sym);
+
+  for (auto &reader : readers) {
+    for (auto &oSym : reader->oSyms) {
+      elf::Symbol &sym = oSym->sym;
+      if (sym.sec == elf::SHN_UNDEF || sym.type == elf::STT_SECTION)
+        continue;
+      switch (sym.bind) {
+      case elf::STB_LOCAL:
+        if (oSym->oSec)
+          sym.sec = oSym->oSec->sec->get_index();
+        writer.addSymbol(&sym);
+        break;
+      default:;
+      }
+    }
+  }
+
+  for (auto &pair : gSyms) {
+    OutputSymbol *oSym = pair.second;
+    elf::Symbol &sym = oSym->sym;
+    if (oSym->oSec)
+      sym.sec = oSym->oSec->sec->get_index();
+    writer.addSymbol(&sym);
+  }
+
+  writer.addSegment(elf::PT_LOAD, elf::PF_R | elf::PF_X, {oSecText.sec});
+  writer.addSegment(elf::PT_LOAD, elf::PF_R, {oSecRodata.sec});
+  writer.addSegment(elf::PT_LOAD, elf::PF_R | elf::PF_W, {oSecData.sec});
+  writer.addSegment(elf::PT_LOAD, elf::PF_R | elf::PF_W, {oSecBss.sec});
+
+  writer.save();
 }
 
 void Linker::applyRelocations() {
   for (auto &reader : readers) {
     for (auto &oRel : reader->oRels) {
+      const OutputSymbol *oSym = oRel->oSym;
+      if (oSym->sym.sec == elf::SHN_UNDEF || oSym->sym.bind == elf::STB_WEAK)
+        oSym = gSyms[oSym->sym.name];
 
+      const elf::Relocation &rel = oRel->rel;
+      u64 v = oSym->getValue() + rel.addend;
+
+      char *addr = oRel->getAddr();
+      u32 x = readLE<u32>(addr);
+      switch (rel.type) {
+      case elf::R_RRISC32_32:
+        x = static_cast<u32>(v);
+        break;
+      case elf::R_RRISC32_HI20: {
+        s32 imm = hi20(v);
+        x &= 0xfff;
+        x |= imm << 12;
+        break;
+      }
+      case elf::R_RRISC32_LO12_I: {
+        s32 imm = lo12(v);
+        x &= 0xfffff;
+        x |= imm << 20;
+        break;
+      }
+      case elf::R_RRISC32_LO12_S: {
+        s32 imm = lo12(v);
+        s32 y = 0;
+        y |= x & 0x7f;
+        y |= (imm & 0b11111) << 7;
+        y |= (x >> 12 & 0x1fff) << 12;
+        y |= imm >> 5 << 25;
+        x = y;
+        break;
+      }
+      default:
+        THROW(LinkageError, "unknown relocation type", toHexStr(rel.type));
+      }
+      writeLE(addr, x);
     }
   }
 }
@@ -189,6 +277,8 @@ void Linker::linkSymbols() {
 
 void Linker::concatenateISecs() {
   for (const std::string &name : {".text", ".rodata", ".data", ".bss"}) {
+    OutputSection *oSec = getOSec(name);
+
     for (auto &reader : readers) {
       InputSection *iSec = reader->getISec(name);
       if (!iSec)
@@ -201,8 +291,10 @@ void Linker::concatenateISecs() {
       offset = P2ALIGN(offset, n);
       iSec->addr = offset;
 
-      getOSec(name)->bb.append(sec->get_data(), sec->get_size());
+      if (name != ".bss")
+        oSec->bb.append(sec->get_data(), sec->get_size());
       offset += sec->get_size();
+      oSec->sym.size = offset - oSec->addr;
     }
   }
 
@@ -228,7 +320,7 @@ void Linker::concatenateISecs() {
 
 OutputSection *Linker::getOSec(const std::string &name) {
   for (auto *oSec : oSecs)
-    if (oSec->name == name) {
+    if (oSec->sym.name == name) {
       if (!oSec->addr) {
         offset = P2ALIGN(offset, elf::RRISC32_MAX_ALIGN);
         oSec->addr = offset;
@@ -244,6 +336,8 @@ void Linker::run() {
 
   concatenateISecs();
   linkSymbols();
+  applyRelocations();
+  saveToFile();
 }
 
 void link(const LinkerOpts &o) { Linker(o).run(); }

@@ -597,6 +597,8 @@ struct Section {
   std::vector<std::unique_ptr<Statement>> stmts;
 
   ByteBuffer bb;
+
+  elf::section *sec = nullptr;
 };
 
 const Statement *Section::findLabel(const std::string &name) {
@@ -1277,9 +1279,6 @@ void Assembler::handleInstr(Statement *stmt) {
 }
 
 template <typename T> void Assembler::handleDirectiveD(Statement *stmt) {
-  if (curSec->name == ".bss")
-    return;
-
   for (const auto &expr : stmt->arguments) {
     ExprVal v = evalExpr(expr);
     if (v.isSym()) {
@@ -1299,8 +1298,6 @@ template <typename T> void Assembler::handleDirectiveD(Statement *stmt) {
 }
 
 void Assembler::handleDirectiveAscii(Statement *stmt) {
-  if (curSec->name == ".bss")
-    return;
   for (const auto &expr : stmt->arguments) {
     curSec->bb.append(expr.s);
     if (stmt->s == ".asciz")
@@ -1371,9 +1368,12 @@ void Assembler::saveToFile() {
   elf::RRisc32Writer writer(opts.outFile, elf::ET_REL);
 
   for (Section *sec : sections) {
-    elf::section *s = writer.getSection(sec->name);
-    s->set_data(sec->bb.getData());
-    s->set_addr_align(1 << sec->align);
+    sec->sec = writer.getSection(sec->name);
+    if (sec->name == ".bss")
+      sec->sec->set_size(sec->size);
+    else
+      sec->sec->set_data(sec->bb.getData());
+    sec->sec->set_addr_align(1 << sec->align);
   }
 
   for (auto &name : symTab.keys()) {

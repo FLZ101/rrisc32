@@ -2,6 +2,7 @@
 #define UTIL_H
 
 #include <cassert>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -64,6 +65,7 @@ private:
 #define CATCH() \
   } catch (Exception &ex) { \
     std::cerr << ex.what() << "\n"; \
+    std::exit(1); \
   }
 
 // clang-format on
@@ -196,6 +198,40 @@ bool isOneOf(const T &x, const Container &elements) {
   return false;
 }
 
+template <typename T> T readLE(const char *addr) {
+  switch (sizeof(T)) {
+  case 1:
+  case 2:
+  case 4:
+  case 8:
+    break;
+  default:
+    UNREACHABLE();
+  }
+  T x = 0;
+  for (int i = sizeof(T) - 1; i >= 0; --i) {
+    x <<= 8;
+    x |= addr[i] & 0xff;
+  }
+  return x;
+}
+
+template <typename T> void writeLE(char *addr, T x) {
+  switch (sizeof(T)) {
+  case 1:
+  case 2:
+  case 4:
+  case 8:
+    break;
+  default:
+    UNREACHABLE();
+  }
+  for (unsigned i = 0; i < sizeof(T); ++i) {
+    addr[i] = x & 0xff;
+    x >>= 8;
+  }
+}
+
 class ByteBuffer {
 public:
   ByteBuffer() {}
@@ -220,21 +256,8 @@ public:
   }
 
   template <typename T> void appendInt(T x) {
-    switch (sizeof(T)) {
-    case 1:
-    case 2:
-    case 4:
-    case 8:
-      break;
-    default:
-      UNREACHABLE();
-    }
-    unsigned i = 0;
-    while (i < sizeof(T)) {
-      s.push_back(x & 0xff);
-      ++i;
-      x >>= 8;
-    }
+    append(sizeof(T), '\0');
+    writeLE(s.data() + s.size() - sizeof(T), x);
   }
 
   void append(const std::string &str) { s.append(str); }
@@ -243,7 +266,7 @@ public:
   void append(size_t n, char c) { s.append(n, c); }
   void append(const char *str, size_t n) { s.append(str, n); }
 
-  const std::string &getData() const { return s; }
+  std::string &getData() { return s; }
 
   void extend(size_t n) {
     if (n > s.size())

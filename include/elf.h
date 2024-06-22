@@ -71,7 +71,7 @@ public:
   void forEachSegment(SegFn fn);
 
   section *getSection(const Symbol &sym) {
-    if (0 <= sym.sec && sym.sec < ei.sections.size())
+    if (1 <= sym.sec && sym.sec < ei.sections.size())
       return ei.sections[sym.sec];
     return nullptr;
   }
@@ -153,6 +153,9 @@ public:
 
   section *getSection(const std::string &name);
   section *addSection(const std::string &name, Elf_Word type, Elf_Xword flags);
+
+  segment *addSegment(Elf_Word type, Elf_Word flags,
+                      std::vector<section *> secs);
 
 protected:
   std::string filename;

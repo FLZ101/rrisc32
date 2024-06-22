@@ -41,7 +41,7 @@ void dump(const Opts &o) {
 } // namespace
 
 int main(int argc, char **argv) {
-  CLI::App app{"Dump an ELF file"};
+  CLI::App app;
 
   Opts o;
   app.add_flag("--all", o.dumpAll, "Same as --elf --seg --sec --sym --rel");

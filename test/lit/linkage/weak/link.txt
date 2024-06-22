@@ -1,0 +1,29 @@
+RUN: assemble -o %t.bar.o %S/bar.s
+RUN: assemble -o %t.foo.o %S/foo.s
+RUN: link -o %t.exe %t.bar.o %t.foo.o
+
+RUN: dump --sym %t.exe | filecheck %s --check-prefix=SYM
+RUN: dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT
+RUN: dump --hex .data %t.exe | filecheck %s --check-prefix=DATA
+
+# SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
+# SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
+# SYM-NEXT: 06      01      00      24      LOCAL   SECTION DEF     02      .text
+# SYM-NEXT: 06      02      00      00      LOCAL   SECTION DEF     03      .rodata
+# SYM-NEXT: 06      03      00      08      LOCAL   SECTION DEF     04      .data
+# SYM-NEXT: 06      04      00      00      LOCAL   SECTION DEF     05      .bss
+# SYM-NEXT: 06      05      1c      00      GLOBAL  NOTYPE  DEF     02      g
+
+# TEXT:      [ Disassembly/.text ]
+# TEXT-NEXT: 00001000  lui x1, 1
+# TEXT-NEXT: 00001004  jalr x1, x1, 28
+# TEXT-NEXT: 00001008  lui x1, 1
+# TEXT-NEXT: 0000100c  jalr x1, x1, 32
+# TEXT-NEXT: 00001010  jalr x0, x1, 0
+# TEXT-NEXT: 00001014  add x1, x2, x3
+# TEXT-NEXT: 00001018  jalr x0, x1, 0
+# TEXT-NEXT: 0000101c  add x2, x3, x4
+# TEXT-NEXT: 00001020  jalr x0, x1, 0
+
+# DATA:      [ Hex/.data ]
+# DATA-NEXT: 0000000000002000  0000101c 00001020

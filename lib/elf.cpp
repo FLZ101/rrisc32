@@ -461,6 +461,20 @@ section *Writer::addSection(const std::string &name, Elf_Word type,
   return sec;
 }
 
+segment *Writer::addSegment(Elf_Word type, Elf_Word flags,
+                            std::vector<section *> secs) {
+  segment *seg = ei.segments.add();
+  seg->set_type(type);
+  seg->set_flags(flags);
+  for (section *sec : secs)
+    seg->add_section(sec, sec->get_addr_align());
+  if (!secs.empty()) {
+    seg->set_virtual_address(secs[0]->get_address());
+    seg->set_physical_address(secs[0]->get_address());
+  }
+  return seg;
+}
+
 void Writer::save() {
   for (auto &sec : ei.sections) {
     if (sec->get_type() != SHT_SYMTAB)

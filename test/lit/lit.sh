@@ -3,14 +3,18 @@
 set -e
 
 cmake_current_binary_dir=$1
-assemble_dir=$2
-dump_dir=$3
-if [[ -z $3 ]] ; then
-  echo 'lit.sh ${CMAKE_CURRENT_BINARY_DIR} $<TARGET_FILE_DIR:assemble> $<TARGET_FILE_DIR:dump>'
+cmake_binary_dir=$2
+
+if [[ -z $2 ]] ; then
+  echo 'lit.sh ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_BINARY_DIR}'
   exit 1
 fi
 
-export PATH=$assemble_dir:$dump_dir:$cmake_current_binary_dir/python/bin:$PATH
+PATH=$cmake_binary_dir/tools/assemble:$PATH
+PATH=$cmake_binary_dir/tools/dump:$PATH
+PATH=$cmake_binary_dir/tools/link:$PATH
+PATH=$cmake_current_binary_dir/python/bin:$PATH
+export PATH
 
 if [[ ! -e "$cmake_current_binary_dir/python" ]] ; then
   pushd "$cmake_current_binary_dir"
