@@ -20,6 +20,7 @@ add_library(rrisc32 STATIC
     elf.cpp
     assembly.cpp
     linkage.cpp
+    emulation.cpp
 )
 
 target_link_libraries(rrisc32

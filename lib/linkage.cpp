@@ -5,7 +5,7 @@
 
 #include "elf.h"
 
-#define DEBUG_TYPE "link"
+#define DEBUG_TYPE "linkage"
 
 namespace linkage {
 

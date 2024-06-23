@@ -318,6 +318,10 @@ void Reader::dumpHex(std::ostream &os, const std::string &name) {
     dumpHex(os, *name2Section[name]);
 }
 
+const std::vector<segment *> &RRisc32Reader::getLoadSegments() {
+  return segments;
+}
+
 void RRisc32Reader::dumpDisassembly(std::ostream &os) {
   forEachSection([this, &os](const section &sec) {
     if (sec.get_type() == SHT_PROGBITS && sec.get_flags() & SHF_EXECINSTR)
@@ -368,9 +372,36 @@ void RRisc32Reader::check() {
   if (machine != EM_RRISC32)
     THROW(ELFError, dump::str_machine(machine));
 
+  if (ei.get_entry() && ei.get_entry() != RRISC32_ENTRY)
+    THROW(ELFError, "unexpected entry", toHexStr(ei.get_entry()));
+
+  checkSegments();
   checkSections();
   checkSymbols();
   checkRelocations();
+}
+
+void RRisc32Reader::checkSegments() {
+  for (segment *seg : segments) {
+    assert(seg->get_file_size() <= seg->get_memory_size());
+
+    Elf_Xword align = seg->get_align();
+    if (align != RRISC32_PAGE_SIZE)
+      THROW(ELFError, "invalid segment alignment", toHexStr(align));
+    Elf64_Addr addr = seg->get_virtual_address();
+    if (addr % RRISC32_PAGE_SIZE)
+      THROW(ELFError, "unaligned segment", seg->get_index(), toHexStr(addr));
+  }
+
+  for (unsigned i = 1; i < segments.size(); ++i) {
+    segment *s1 = segments[i - 1];
+    segment *s2 = segments[i];
+    u64 page1 = (s1->get_virtual_address() + s1->get_memory_size() - 1) >>
+                RRISC32_PAGE_ALIGN;
+    u64 page2 = s2->get_virtual_address() >> RRISC32_PAGE_ALIGN;
+    if (page1 >= page2)
+      THROW(ELFError, "overlapped segments", s1->get_index(), s2->get_index());
+  }
 }
 
 #define UNEXPECTED_SECTION_NAME(name)                                          \

@@ -5,6 +5,7 @@
 #include "elf.h"
 
 namespace {
+
 struct Opts {
   bool dumpAll = false;
   bool dumpELFHeader = false;
@@ -38,6 +39,7 @@ void dump(const Opts &o) {
     reader.dumpDisassembly(std::cout, name);
   CATCH()
 }
+
 } // namespace
 
 int main(int argc, char **argv) {

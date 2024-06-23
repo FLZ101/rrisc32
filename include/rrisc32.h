@@ -24,16 +24,18 @@ DEFINE_EXCEPTION(RRisc32Err)
 
 #define DIVIDED_BY_ZERO(...) THROW(RRisc32Err, "divided by zero", ##__VA_ARGS__)
 
-#define SEGMENT_FAULT(...) THROW(RRisc32Err, "segment fault", ##__VA_ARGS__)
+#define BUS_ERROR(...) THROW(RRisc32Err, "bus error", ##__VA_ARGS__)
 
 class Machine {
 public:
-  Machine(size_t sz = 32 * 1024 * 1024) : sz(sz) { mem = new s8[sz]; }
+  Machine(size_t memSize) : memSize(memSize) { mem = new s8[memSize]{}; }
 
   Machine(const Machine &) = delete;
   Machine &operator=(const Machine &) = delete;
 
-  ~Machine() { delete mem; }
+  virtual ~Machine() { delete mem; }
+
+  u32 fetch();
 
   u32 ri();
   void wi(u32 value);
@@ -44,14 +46,18 @@ public:
   template <typename T = s32> T rm(u32 addr);
   template <typename T = s32> void wm(u32 addr, T value);
 
-  void ecall();
-  void ebreak();
+  virtual void befRm(u32 addr, unsigned n) {}
+  virtual void befWm(u32 addr, unsigned n) {}
+  virtual void aftWm(u32 addr, unsigned n) {}
+
+  virtual void ecall() {}
+  virtual void ebreak() {}
 
 protected:
   u32 ip = 0;
-  s32 reg[32] = {};
+  s32 reg[32]{};
   s8 *mem = nullptr;
-  size_t sz = 0;
+  size_t memSize = 0;
 };
 
 namespace Reg {
@@ -88,6 +94,41 @@ const u32 x28 = 28;
 const u32 x29 = 29;
 const u32 x30 = 30;
 const u32 x31 = 31;
+
+const u32 zero = 0;
+const u32 ra = 1;
+const u32 sp = 2;
+const u32 gp = 3;
+const u32 tp = 4;
+const u32 t0 = 5;
+const u32 t1 = 6;
+const u32 t2 = 7;
+const u32 s0 = 8;
+const u32 s1 = 9;
+const u32 a0 = 10;
+const u32 a1 = 11;
+const u32 a2 = 12;
+const u32 a3 = 13;
+const u32 a4 = 14;
+const u32 a5 = 15;
+const u32 a6 = 16;
+const u32 a7 = 17;
+const u32 s2 = 18;
+const u32 s3 = 19;
+const u32 s4 = 20;
+const u32 s5 = 21;
+const u32 s6 = 22;
+const u32 s7 = 23;
+const u32 s8 = 24;
+const u32 s9 = 25;
+const u32 s10 = 26;
+const u32 s11 = 27;
+const u32 t3 = 28;
+const u32 t4 = 29;
+const u32 t5 = 30;
+const u32 t6 = 31;
+
+const u32 fp = s0;
 
 } // namespace Reg
 
@@ -146,7 +187,7 @@ namespace test {
 u32 encode(const std::string &name, const std::string &operands);
 u32 encode(std::string s);
 std::string decode(u32 b);
-}
+} // namespace test
 
 } // namespace rrisc32
 #endif

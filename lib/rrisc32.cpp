@@ -6,6 +6,11 @@
 
 namespace rrisc32 {
 
+u32 Machine::fetch() {
+  ip += 4;
+  return rm(ip - 4);
+}
+
 u32 Machine::ri() { return ip; }
 
 void Machine::wi(u32 value) { ip = value; }
@@ -21,20 +26,22 @@ void Machine::wr(unsigned i, s32 value) {
 }
 
 template <typename T> T Machine::rm(u32 addr) {
-  if (addr + sizeof(T) >= sz)
-    SEGMENT_FAULT(toHexStr(addr, true, false));
+  befRm(addr, sizeof(T));
+
+  if (addr + sizeof(T) >= memSize)
+    BUS_ERROR(toHexStr(addr, true, false));
   return *reinterpret_cast<T *>(mem + addr);
 }
 
 template <typename T> void Machine::wm(u32 addr, T value) {
-  if (addr + sizeof(T) >= sz)
-    SEGMENT_FAULT(toHexStr(addr, true, false));
+  befWm(addr, sizeof(T));
+
+  if (addr + sizeof(T) >= memSize)
+    BUS_ERROR(toHexStr(addr, true, false));
   *reinterpret_cast<T *>(mem + addr) = value;
+
+  aftWm(addr, sizeof(T));
 }
-
-void Machine::ecall() {}
-
-void Machine::ebreak() {}
 
 // clang-format off
 const std::string reg2NameX[] = {

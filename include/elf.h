@@ -26,9 +26,10 @@ const Elf_Word R_RRISC32_HI20 = 26;
 const Elf_Word R_RRISC32_LO12_I = 27;
 const Elf_Word R_RRISC32_LO12_S = 28;
 
-const u8 RRISC32_MAX_ALIGN = 12;
-const unsigned RRISC32_PAGE_SIZE = 1 << RRISC32_MAX_ALIGN;
+const u8 RRISC32_PAGE_ALIGN = 12;
+const unsigned RRISC32_PAGE_SIZE = 1 << RRISC32_PAGE_ALIGN;
 const Elf64_Addr RRISC32_ENTRY = RRISC32_PAGE_SIZE;
+const u8 RRISC32_MAX_ALIGN = RRISC32_PAGE_ALIGN;
 
 struct Symbol {
   std::string name;
@@ -116,8 +117,14 @@ protected:
 class RRisc32Reader : public Reader {
 public:
   explicit RRisc32Reader(const std::string &filename) : Reader(filename) {
+    forEachSegment([this](elf::segment &seg) {
+      if (seg.get_type() == elf::PT_LOAD && seg.get_memory_size() > 0)
+        segments.push_back(&seg);
+    });
     check();
   }
+
+  const std::vector<segment *> &getLoadSegments();
 
   void dumpDisassembly(std::ostream &os);
   void dumpDisassembly(std::ostream &os, const section &sec);
@@ -126,12 +133,15 @@ public:
 private:
   void check();
 
+  void checkSegments();
   void checkSections();
   void checkSection(const std::string &name, Elf_Word type,
                     Elf_Xword flags = 0);
 
   void checkSymbols();
   void checkRelocations();
+
+  std::vector<segment *> segments;
 
   // clang-format off
   const std::vector<std::string> secNames = {
