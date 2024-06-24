@@ -321,6 +321,13 @@ bool chkDebugType(const char *);
       X;                                                                       \
     }                                                                          \
   } while (false)
+
+#define LOG_WITH_TYPE(TYPE, ...)                                               \
+  do {                                                                         \
+    if (chkDebugType(TYPE)) {                                                  \
+      std::cerr << "!" << TYPE << " " << join(" : ", ##__VA_ARGS__) << "\n";   \
+    }                                                                          \
+  } while (false)
 #else
 #define setDebugType(X)                                                        \
   do {                                                                         \
@@ -332,7 +339,14 @@ bool chkDebugType(const char *);
 #define DEBUG_WITH_TYPE(TYPE, X)                                               \
   do {                                                                         \
   } while (false)
+
+#define LOG_WITH_TYPE(TYPE, ...)                                               \
+  do {                                                                         \
+  } while (false)
 #endif
 
 #define DEBUG(X) DEBUG_WITH_TYPE(DEBUG_TYPE, X)
+
+#define LOG(...) LOG_WITH_TYPE(DEBUG_TYPE, ##__VA_ARGS__)
+
 #endif

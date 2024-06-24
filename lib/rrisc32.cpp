@@ -6,43 +6,6 @@
 
 namespace rrisc32 {
 
-u32 Machine::fetch() {
-  ip += 4;
-  return rm(ip - 4);
-}
-
-u32 Machine::ri() { return ip; }
-
-void Machine::wi(u32 value) { ip = value; }
-
-template <typename T> T Machine::rr(unsigned i) {
-  assert(i < 32);
-  return static_cast<T>(reg[i]);
-}
-
-void Machine::wr(unsigned i, s32 value) {
-  assert(i < 32);
-  reg[i] = value;
-}
-
-template <typename T> T Machine::rm(u32 addr) {
-  befRm(addr, sizeof(T));
-
-  if (addr + sizeof(T) >= memSize)
-    BUS_ERROR(toHexStr(addr, true, false));
-  return *reinterpret_cast<T *>(mem + addr);
-}
-
-template <typename T> void Machine::wm(u32 addr, T value) {
-  befWm(addr, sizeof(T));
-
-  if (addr + sizeof(T) >= memSize)
-    BUS_ERROR(toHexStr(addr, true, false));
-  *reinterpret_cast<T *>(mem + addr) = value;
-
-  aftWm(addr, sizeof(T));
-}
-
 // clang-format off
 const std::string reg2NameX[] = {
     "x0",  "x1",  "x2",  "x3",  "x4",  "x5",  "x6",  "x7",
@@ -316,9 +279,9 @@ std::ostream &operator<<(std::ostream &os, const Instr &instr) {
   return os;
 }
 
-u32 encode(const Instr &instr) {
+u32 encode(Instr &instr) {
   std::string format;
-  for (const auto &operand : instr.operands)
+  for (auto &operand : instr.operands)
     format.push_back(std::get_if<std::string>(&operand) ? 'r' : 'i');
 
   u32 rd = 0, rs1 = 0, rs2 = 0;
@@ -377,6 +340,11 @@ u32 encode(const Instr &instr) {
     UNREACHABLE();
   }
 
+  instr.rd = rd;
+  instr.rs1 = rs1;
+  instr.rs2 = rs2;
+  instr.imm = imm;
+
 #undef _IMM
 #undef _REG
 
@@ -427,7 +395,8 @@ u32 encode(const Instr &instr) {
 
 u32 encode(const std::string &name,
            const std::vector<Instr::Operand> &operands) {
-  return encode(Instr(name, operands));
+  Instr instr(name, operands);
+  return encode(instr);
 }
 
 void decode(u32 b, Instr &instr, const InstrDesc *&id) {
@@ -559,11 +528,27 @@ void decode(u32 b, Instr &instr, const InstrDesc *&id) {
   default:
     UNREACHABLE();
   }
+
+  instr.rd = rd;
+  instr.rs1 = rs1;
+  instr.rs2 = rs2;
+  instr.imm = imm;
 }
 
 void decode(u32 b, Instr &instr) {
   const InstrDesc *desc;
   decode(b, instr, desc);
+}
+
+void execute(Machine &m, const Instr &instr, const InstrDesc *id) {
+  id->exe(m, instr.rd, instr.rs1, instr.rs2, instr.imm);
+}
+
+void execute(Machine &m, u32 b) {
+  rrisc32::Instr instr;
+  const rrisc32::InstrDesc *id = nullptr;
+  decode(b, instr, id);
+  execute(m, instr, id);
 }
 
 namespace test {

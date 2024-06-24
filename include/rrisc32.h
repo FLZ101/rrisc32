@@ -35,16 +35,42 @@ public:
 
   virtual ~Machine() { delete mem; }
 
-  u32 fetch();
+  u32 fetch() {
+    ip += 4;
+    return rm(ip - 4);
+  }
 
-  u32 ri();
-  void wi(u32 value);
+  u32 ri() { return ip; }
 
-  template <typename T = s32> T rr(unsigned i);
-  void wr(unsigned i, s32 value);
+  void wi(u32 value) { ip = value; }
 
-  template <typename T = s32> T rm(u32 addr);
-  template <typename T = s32> void wm(u32 addr, T value);
+  template <typename T = s32> T rr(unsigned i) {
+    assert(i < 32);
+    return static_cast<T>(reg[i]);
+  }
+
+  void wr(unsigned i, s32 value) {
+    assert(i < 32);
+    reg[i] = value;
+  }
+
+  template <typename T = s32> T rm(u32 addr) {
+    befRm(addr, sizeof(T));
+
+    if (addr + sizeof(T) >= memSize)
+      BUS_ERROR(toHexStr(addr, true, false));
+    return *reinterpret_cast<T *>(mem + addr);
+  }
+
+  template <typename T = s32> void wm(u32 addr, T value) {
+    befWm(addr, sizeof(T));
+
+    if (addr + sizeof(T) >= memSize)
+      BUS_ERROR(toHexStr(addr, true, false));
+    *reinterpret_cast<T *>(mem + addr) = value;
+
+    aftWm(addr, sizeof(T));
+  }
 
   virtual void befRm(u32 addr, unsigned n) {}
   virtual void befWm(u32 addr, unsigned n) {}
@@ -136,10 +162,10 @@ enum class InstrType { Invalid, R, I, S, B, U, J };
 
 struct InstrDesc {
 
-  using exeFn = std::function<void(Machine &, u32, u32, u32, u32)>;
+  using exeFn = std::function<void(Machine &, u32, u32, u32, s32)>;
 
   InstrDesc(InstrType type, u32 opcode, u32 funct3, u32 funct7,
-            const std::string &name, exeFn execute)
+            const std::string &name, exeFn exe)
       : type(type), opcode(opcode), funct3(funct3), funct7(funct7), name(name),
         exe(exe) {}
 
@@ -152,8 +178,9 @@ struct InstrDesc {
 };
 
 class Instr {
-  friend u32 encode(const Instr &instr);
+  friend u32 encode(Instr &instr);
   friend void decode(u32 b, Instr &instr, const InstrDesc *&id);
+  friend void execute(Machine &m, const Instr &instr, const InstrDesc *id);
 
 public:
   using Operand = std::variant<std::string, s32>;
@@ -172,16 +199,22 @@ public:
 private:
   std::string name;
   std::vector<Operand> operands;
+
+  u32 rd = 0, rs1 = 0, rs2 = 0;
+  s32 imm = 0;
 };
 
 std::ostream &operator<<(std::ostream &os, const Instr &instr);
 
-u32 encode(const Instr &instr);
+u32 encode(Instr &instr);
 u32 encode(const std::string &name,
            const std::vector<Instr::Operand> &operands);
 
-void decode(u32 b, Instr &instr, const InstrDesc *&desc);
+void decode(u32 b, Instr &instr, const InstrDesc *&id);
 void decode(u32 b, Instr &instr);
+
+void execute(Machine &m, const Instr &instr, const InstrDesc *id);
+void execute(Machine &m, u32 b);
 
 namespace test {
 u32 encode(const std::string &name, const std::string &operands);
