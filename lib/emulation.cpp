@@ -43,6 +43,7 @@ private:
   void syscallClose();
   void syscallRead();
   void syscallWrite();
+  void syscallExit();
 
   std::FILE *checkFD(s32 fd);
   s32 findFD();
@@ -61,9 +62,12 @@ private:
     std::mem_fn(&Emulator::syscallOpen),
     std::mem_fn(&Emulator::syscallClose),
     std::mem_fn(&Emulator::syscallRead),
-    std::mem_fn(&Emulator::syscallWrite)
+    std::mem_fn(&Emulator::syscallWrite),
+    std::mem_fn(&Emulator::syscallExit),
   };
   // clang-format on
+
+  bool exited = false;
 
   using FilePointer = std::unique_ptr<std::FILE, decltype(&fclose)>;
   std::vector<FilePointer> files;
@@ -149,6 +153,12 @@ void Emulator::syscallWrite() {
   RET(i);
 }
 
+void Emulator::syscallExit() {
+  s32 status = rArg(1);
+  exited = true;
+  LOG("EXIT", status);
+}
+
 std::FILE *Emulator::checkFD(s32 fd) {
   switch (fd) {
   case 0:
@@ -225,11 +235,10 @@ void Emulator::load() {
 void Emulator::run() {
   load();
 
-  while (true) {
+  while (!exited) {
     u32 b = fetch();
     LOG("FETCH", rrisc32::test::decode(b));
     rrisc32::execute(*this, b);
-    break;
   }
 }
 

@@ -289,6 +289,16 @@ template <typename T, unsigned N> inline T signExt(T x) {
 s32 hi20(s32 x);
 s32 lo12(s32 x);
 
+template <unsigned N> constexpr s64 minImm() {
+  return signExt<s64, N>(1 << (N - 1));
+}
+
+template <unsigned N> constexpr s64 maxImm() { return (1U << (N - 1)) - 1; }
+
+template <unsigned N> bool checkImmRange(s64 imm) {
+  return minImm<N>() <= imm && imm <= maxImm<N>();
+}
+
 template <typename Key, typename T> class CacheMap {
 public:
   CacheMap() {}

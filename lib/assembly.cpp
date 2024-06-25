@@ -628,6 +628,8 @@ struct Symbol {
       sym.bind = elf::STB_GLOBAL;
   }
 
+  bool isUndef() { return !sec && sym.sec == elf::SHN_UNDEF; }
+
   void set(s64 offset) { set(nullptr, offset); }
 
   void set(Section *sec, s64 offset) {
@@ -836,7 +838,8 @@ private:
 
 #define CHECK_DUPLICATED_SYMBOL(name)                                          \
   do {                                                                         \
-    if (getSymbol(name))                                                       \
+    Symbol *sym = getSymbol(name);                                             \
+    if (sym && !sym->isUndef())                                                \
       THROW(AssemblyError, "duplicated symbol", name);                         \
   } while (false)
 
@@ -1059,6 +1062,14 @@ void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
   if (name == "li" && format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
+    ExprVal v1 = evalExpr(e1);
+    if (v1.isInt()) {
+      s64 imm = v1.getI();
+      if (checkImmRange<12>(imm)) {
+        addInstr("addi", {e0, x0, e1});
+        return;
+      }
+    }
     addInstr("lui", {e0, Expr("hi", {e1})});
     addInstr("addi", {e0, e0, Expr("lo", {e1})});
   } else if (isOneOf(name, {"lb", "lh", "lw", "lbu", "lhu", "lwu"}) &&
@@ -1254,14 +1265,7 @@ void Assembler::handleInstr(Statement *stmt) {
       s64 imm = v.getOffset() - stmt->offset;
       if (imm & 1)
         INVALID_STATEMENT("not even", imm);
-
-      s64 lo = signExt<s64, 13>(0x1000);
-      s64 hi = 0x0ffeu;
-      if (name == "jal") {
-        lo = signExt<s64, 21>(0x100000);
-        hi = 0x0ffffeu;
-      }
-      if (imm < lo || imm > hi)
+      if (name == "jal" ? !checkImmRange<21>(imm) : !checkImmRange<13>(imm))
         INVALID_STATEMENT("out of range", imm);
       instr.addOperand(imm);
     } else if (v.isRel()) {

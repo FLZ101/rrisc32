@@ -13,6 +13,7 @@ fi
 PATH=$cmake_binary_dir/tools/assemble:$PATH
 PATH=$cmake_binary_dir/tools/dump:$PATH
 PATH=$cmake_binary_dir/tools/link:$PATH
+PATH=$cmake_binary_dir/tools/emulate:$PATH
 PATH=$cmake_current_binary_dir/python/bin:$PATH
 export PATH
 
