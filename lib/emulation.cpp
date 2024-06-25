@@ -1,6 +1,8 @@
 #include "emulation.h"
 
+#include <chrono>
 #include <cstdio>
+#include <thread>
 
 #include "elf.h"
 #include "rrisc32.h"
@@ -39,14 +41,25 @@ public:
   void ebreak() override {}
 
 private:
+  void syscallExit();
+
   void syscallOpen();
   void syscallClose();
   void syscallRead();
   void syscallWrite();
-  void syscallExit();
+  void syscallSeek();
+
+  void syscallBrk();
+
+  void syscallSleep();
 
   std::FILE *checkFD(s32 fd);
   s32 findFD();
+
+  bool checkHeap(u32 ht);
+  bool checkHeap();
+  bool checkStack(u32 st);
+  bool checkStack();
 
   void wRet(s32 value);
   s32 rArg(unsigned i);
@@ -59,11 +72,14 @@ private:
   // clang-format off
   const std::vector<decltype(std::mem_fn(&Emulator::syscallOpen))> syscalls
   {
+    std::mem_fn(&Emulator::syscallExit),
     std::mem_fn(&Emulator::syscallOpen),
     std::mem_fn(&Emulator::syscallClose),
     std::mem_fn(&Emulator::syscallRead),
     std::mem_fn(&Emulator::syscallWrite),
-    std::mem_fn(&Emulator::syscallExit),
+    std::mem_fn(&Emulator::syscallSeek),
+    std::mem_fn(&Emulator::syscallBrk),
+    std::mem_fn(&Emulator::syscallSleep)
   };
   // clang-format on
 
@@ -93,6 +109,12 @@ void Emulator::ecall() {
     return;                                                                    \
   } while (false)
 
+void Emulator::syscallExit() {
+  s32 status = rArg(1);
+  exited = true;
+  LOG("EXIT", status);
+}
+
 void Emulator::syscallOpen() {
   s32 fd = findFD();
   if (fd < 0) {
@@ -101,6 +123,9 @@ void Emulator::syscallOpen() {
   }
   std::string filename = o.fsRoot + "/" + rStr(rArg(1));
   std::string mode = rStr(rArg(2));
+  if (!isOneOf('b', mode))
+    mode.push_back('b');
+
   FilePointer fp(std::fopen(filename.data(), mode.data()), &fclose);
   if (!fp) {
     LOG("can not open", filename);
@@ -117,46 +142,76 @@ void Emulator::syscallClose() {
 }
 
 void Emulator::syscallRead() {
-  u32 buffer = rArg(1);
-  u32 size = rArg(2);
+  s32 fd = rArg(1);
+  u32 buf = rArg(2);
   u32 count = rArg(3);
-  s32 fd = rArg(4);
   std::FILE *fp = checkFD(fd);
-  if (!size || !count || !fp)
+  if (!count || !fp)
     RET(0);
 
   u32 i = 0;
-  for (; i < size && i < count; ++i) {
+  for (; i < count; ++i) {
     int c = std::fgetc(fp);
     if (c == EOF)
       break;
-    wm<u8>(buffer + i, c);
+    wm<u8>(buf + i, c);
   }
   RET(i);
 }
 
 void Emulator::syscallWrite() {
-  u32 buffer = rArg(1);
-  u32 size = rArg(2);
+  s32 fd = rArg(1);
+  u32 buf = rArg(2);
   u32 count = rArg(3);
-  s32 fd = rArg(4);
   std::FILE *fp = checkFD(fd);
-  if (!size || !count || !fp)
+  if (!count || !fp)
     RET(0);
 
   u32 i = 0;
-  for (; i < size && i < count; ++i) {
-    u8 c = rm<u8>(buffer + i);
+  for (; i < count; ++i) {
+    u8 c = rm<u8>(buf + i);
     if (EOF == std::fputc(c, fp))
       break;
   }
   RET(i);
 }
 
-void Emulator::syscallExit() {
-  s32 status = rArg(1);
-  exited = true;
-  LOG("EXIT", status);
+void Emulator::syscallSeek() {
+  s32 fd = rArg(1);
+  s32 offset = rArg(2);
+  s32 whence = rArg(3);
+  std::FILE *fp = checkFD(fd);
+  if (!fp)
+    RET(-1);
+
+  switch (whence) {
+  case 0:
+    whence = SEEK_SET;
+    break;
+  case 1:
+    whence = SEEK_CUR;
+    break;
+  default:
+    whence = SEEK_END;
+    break;
+  }
+  if (fseek(fp, offset, whence))
+    RET(-1);
+  RET(ftell(fp));
+}
+
+void Emulator::syscallBrk() {
+  s32 inc = rArg(1);
+  if (!checkHeap(inc + heapTop))
+    RET(-1);
+
+  wRet(heapTop);
+  heapTop += inc;
+}
+
+void Emulator::syscallSleep() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(rArg(1)));
+  wRet(0);
 }
 
 std::FILE *Emulator::checkFD(s32 fd) {
@@ -184,6 +239,20 @@ s32 Emulator::findFD() {
       return i;
   return -1;
 }
+
+bool Emulator::checkHeap(u32 ht) {
+  return ht >= heapBot &&
+         getStackTop() / elf::RRISC32_PAGE_SIZE > ht / elf::RRISC32_PAGE_SIZE;
+}
+
+bool Emulator::checkHeap() { return checkHeap(heapTop); }
+
+bool Emulator::checkStack(u32 st) {
+  return st <= stackBot &&
+         st / elf::RRISC32_PAGE_SIZE > heapTop / elf::RRISC32_PAGE_SIZE;
+}
+
+bool Emulator::checkStack() { return checkStack(getStackTop()); }
 
 void Emulator::wRet(s32 value) { wr(Reg::a0, value); }
 
@@ -225,11 +294,11 @@ void Emulator::load() {
                       << elf::RRISC32_PAGE_ALIGN;
   stackBot = (o.nPages - 1) << elf::RRISC32_PAGE_ALIGN;
 
-  if (heapTop >= stackBot)
-    THROW(EmulationError, "no space for heap");
-
   wi(elf::RRISC32_ENTRY);
   wr(Reg::sp, stackBot);
+
+  if (!checkHeap())
+    THROW(EmulationError, "no space for heap");
 }
 
 void Emulator::run() {

@@ -5,15 +5,14 @@
   .text
 
   # write msg
-  li a0, 3
-  li a1 $msg
-  li a2, $msgSize
+  li a0, 4
+  li a1, 1
+  li a2 $msg
   li a3, $msgSize
-  li a4, 1
   ecall
 
   # exit 0
-  li a0, 4
+  li a0, 0
   li a1, 0
   ecall
 
