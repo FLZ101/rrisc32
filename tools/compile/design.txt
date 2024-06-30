@@ -1,0 +1,60 @@
+one pass is enough
+
+# definition
+# declaration
+
+"""
+named types
+
+empty struct is not allowed
+
+variables
+    constant
+
+    global
+        decl many times
+        def at most one times
+    static
+
+    local
+
+scopes
+
+functions
+    return struct
+
+value
+    rvalue
+    lvalue
+
+    eval
+
+types, vars, functions are all symbols
+
+    symbol table
+
+eval expression with stack
+    push operands
+    calc
+    result is on the stack top
+
+    long long, float, double is not supported
+
+    each operand is of 4 bytes
+
+function
+    prelogue
+    epilogue
+
+scope state
+    sp
+
+    allocate variable
+        push
+
+    enter scope
+        copy sp
+
+    exit scope
+        restore scope state
+"""
