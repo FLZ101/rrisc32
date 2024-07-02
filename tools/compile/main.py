@@ -1,6 +1,7 @@
 import sys
 
 from abc import ABC
+
 from pycparser import c_ast
 
 
@@ -109,11 +110,11 @@ class PointerType(Type):
 
 class FunctionSignature:
     def __init__(self, ret: Type, args: list[Type]) -> None:
-        self.ret = ret
-        self.args = args
+        self._ret = ret
+        self._args = args
 
     def __repr__(self) -> str:
-        return "(%r => %r)" % (self.args, self.ret)
+        return "(%r => %r)" % (self._args, self._ret)
 
 
 class FunctionType(Type):
@@ -132,7 +133,7 @@ class Function:
         self._sig = sig
 
     def __repr__(self) -> str:
-        return "(%s, %r)" % (self._name, self._sig)
+        return "%s%r" % (self._name, self._sig)
 
 
 class Variable:
@@ -145,19 +146,60 @@ class Variable:
 
 
 class Label:
-    pass
+    def __init__(self, name: str):
+        self._name = name
+
+    def __repr__(self) -> str:
+        return self._name
 
 
 class Scope(ABC):
     def __init__(self) -> None:
-        self._symbols: dict[str, Variable|Type|Function|Label] = {}
+        self._symbolTable: dict[str, Type | Variable | Function | Label] = {}
+
+    def addSymbol(self, name: str, value: Type | Variable | Function | Label):
+        if name in self._symbolTable:
+            raise SemaError("redefined", name)
+        self._symbolTable[name] = value
+
+    def findSymbol(self, name: str):
+        return self._symbolTable.get(name)
+
+    def getSymbol(self, name: str):
+        if name in self._symbolTable:
+            return self._symbolTable[name]
+        raise SemaError("undefined", name)
+
+    def getType(self, name: str):
+        ty = self.getSymbol(name)
+        if not isinstance(ty, Type):
+            raise SemaError("not a type", name)
+        return ty
+
+    def getVariable(self, name: str):
+        var = self.getSymbol(name)
+        if not isinstance(var, Variable):
+            raise SemaError("not a variable", name)
+        return var
+
+    def getFunction(self, name: str):
+        func = self.getSymbol(name)
+        if not isinstance(func, Function):
+            raise SemaError("not a function", name)
+        return func
+
+    def getLabel(self, name: str):
+        label = self.getSymbol(name)
+        if not isinstance(label, Label):
+            raise SemaError("not a label", name)
+        return label
 
 
 class LocalScope(Scope):
-    def __init__(self) -> None:
+    def __init__(self, offset: int = 0) -> None:
         super().__init__()
 
-        self._offset: int = 0
+        self._offset = offset
 
 
 class GlobalScope(Scope):
@@ -166,7 +208,7 @@ class GlobalScope(Scope):
 
 
 def wrap(func):
-    def f(self: Sema, node: c_ast.Node):
+    def f(self: Compiler, node: c_ast.Node):
         try:
             self._path.append(node)
             func(self, node)
@@ -177,75 +219,54 @@ def wrap(func):
 
     return f
 
+
 class Compiler(c_ast.NodeVisitor):
     def __init__(self) -> None:
         self._path = []
-        self._namedTypes: dict[str, Type] = {}
+        self._scopes: list[Scope] = [GlobalScope()]
 
-        self.addNamedType(VoidType())
+        self.addType(VoidType())
 
-        self.addNamedType(IntType("char", 1), ["signed char"])
-        self.addNamedType(
+        self.addType(IntType("char", 1), ["signed char"])
+        self.addType(
             IntType("short", 2), ["short int", "signed short", "signed short int"]
         )
-        self.addNamedType(IntType("int", 4), ["signed int"])
-        self.addNamedType(
-            IntType("long", 4), ["long int", "signed long", "signed long int"]
+        self.addType(IntType("int", 4), ["signed int"])
+        self.addType(IntType("long", 4), ["long int", "signed long", "signed long int"])
+        self.addType(
+            IntType("long long", 8),
+            ["long long int", "signed long long", "signed long long int"],
         )
-        # self.addNamedType(
-        #     IntType("long long", 8),
-        #     ["long long int", "signed long long", "signed long long int"],
-        # )
 
-        self.addNamedType(IntType("unsigned char", 1))
-        self.addNamedType(IntType("unsigned short", 2), ["unsigned short int"])
-        self.addNamedType(IntType("unsigned int", 4))
-        self.addNamedType(IntType("unsigned long", 4), ["unsigned long int"])
-        # self.addNamedType(IntType("unsigned long long", 8), ["unsigned long long int"])
+        self.addType(IntType("unsigned char", 1))
+        self.addType(IntType("unsigned short", 2), ["unsigned short int"])
+        self.addType(IntType("unsigned int", 4))
+        self.addType(IntType("unsigned long", 4), ["unsigned long int"])
+        self.addType(IntType("unsigned long long", 8), ["unsigned long long int"])
 
-        # self.addNamedType(FloatType("float", 4))
-        # self.addNamedType(FloatType("double", 8))
-
-        self.scopes = []
-
-    def addNamedType(self, ty: Type, aliases: list[str] = None):
-        name = ty.name()
-        assert name
-
-        if aliases is None:
-            aliases = []
-        aliases.append(name)
-        for _ in aliases:
-            if _ in self._namedTypes:
-                raise SemaError("redefined type", _)
-            self._namedTypes[_] = ty
-
-    def getNamedType(self, name: str):
-        if name not in self._namedTypes:
-            raise SemaError("undefined type", name)
-        return self._namedTypes[name]
+        # self.addType(FloatType("float", 4))
+        # self.addType(FloatType("double", 8))
 
     def enterScope(self):
-        self.scopes.append(Scope())
+        self.scopes.append(LocalScope())
 
     def exitScope(self):
         self.scopes.pop()
 
-    def findVariable(self, name: str):
-        for i in range(len(self.scopes) - 1, -1, -1):
-            scope = self.scopes[i]
-            if name in scope:
-                return scope[name]
-        raise SemaError("undefined variable", name)
+    def currentScope(self):
+        return self._scopes[-1]
 
-    def addVariable(self, var: Variable):
-        scope = self.scopes[-1]
-        if var._name in scope:
-            raise SemaError("redefined variable", var._name)
-        scope[var._name] = var
+    def addType(self, ty: Type, names: list[str] = None):
+        if names is None:
+            names = []
+        if ty.name():
+            names.append(ty.name())
+        assert(len(names) > 0)
+        for name in names:
+            self.currentScope().addSymbol(name, ty)
 
     @wrap
-    def visit_Typedef(self, node:c_ast.Typedef):
+    def visit_Typedef(self, node: c_ast.Typedef):
         pass
 
     @wrap

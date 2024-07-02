@@ -9,4 +9,4 @@ if __name__ == "__main__":
     args = argparser.parse_args()
 
     ast = parse_file(args.filename, use_cpp=True)
-    ast.show(showcoord=True)
+    ast.show(showcoord=False)
