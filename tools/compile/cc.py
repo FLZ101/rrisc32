@@ -220,7 +220,7 @@ class Section:
 
 
 def wrap(func):
-    def f(self: Compiler, node: c_ast.Node):
+    def f(self, node: c_ast.Node):
         try:
             self._path.append(node)
             func(self, node)
@@ -235,9 +235,8 @@ def wrap(func):
 
 
 class Compiler(c_ast.NodeVisitor):
-    def __init__(self, o: io.StringIO) -> None:
+    def __init__(self) -> None:
         self._path = []
-        self._o = o
 
         self._secText = Section(".text")
         self._secRodata = Section(".rodata")
@@ -270,6 +269,9 @@ class Compiler(c_ast.NodeVisitor):
         # self.addType(FloatType("float", 4))
         # self.addType(FloatType("double", 8))
 
+    def save(self, o: io.StringIO):
+        pass
+
     def enterScope(self):
         self.scopes.append(LocalScope(self.curScope))
 
@@ -291,7 +293,7 @@ class Compiler(c_ast.NodeVisitor):
 
     @wrap
     def visit_TypeDecl(self, node: c_ast.TypeDecl):
-        self.generic_visit(node.type)
+        self.visit(node.type)
 
     @wrap
     def visit_IdentifierType(self, node: c_ast.IdentifierType):
@@ -304,19 +306,28 @@ class Compiler(c_ast.NodeVisitor):
             if not decl.name:
                 raise SemaError("anonymous field is not supported")
         for decl in node.decls:
-            self.generic_visit(decl)
-
-    @wrap
-    def visit_PtrDecl(self, node: c_ast.PtrDecl):
-        pass
+            self.visit(decl)
 
     @wrap
     def visit_ArrayDecl(self, node: c_ast.ArrayDecl):
-        pass
+        if node.dim:
+            self.visit(node.dim)
+            dim = getattr(node.dim, "_o_int")
+            if dim is None or dim < 1:
+                raise SemaError(
+                    "not an integral constant expression which evaluates to a value greater than zero"
+                )
+        else:
+            pass
+
+    @wrap
+    def visit_PtrDecl(self, node: c_ast.PtrDecl):
+        self.visit(node.type)
+        self._o_type = PointerType(node.type.o_type)
 
     @wrap
     def visit_Typedef(self, node: c_ast.Typedef):
-        self.generic_visit(node.type)
+        self.visit(node.type)
         self.curScope.addSymbol(node.name, node.type._o_type)
 
     @wrap
@@ -341,8 +352,8 @@ class Compiler(c_ast.NodeVisitor):
     def visit_Decl(self, node: c_ast.Decl):
         if node.bitsize:
             raise SemaError("bitfield is not supported")
-        self.generic_visit(node.type)
-        self.generic_visit(node.init)
+        self.visit(node.type)
+        self.visit(node.init)
 
     @wrap
     def visit_Goto(self, name: c_ast.Goto):
