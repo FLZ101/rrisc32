@@ -20,6 +20,10 @@ int a[10] = {1, 2, 3};
       Constant: int, 3
 */
 
+const int n = 5;
+int a[2 * 5];
+int a[3 * n];
+
 int a[] = {1, 2, 3};
 /*
   Decl: a, [], [], [], []
@@ -47,6 +51,8 @@ int a = 10;
     Constant: int, 10
 */
 
+int a[2][3];
+int a[2][3] = {{ 1, 2, 3}, {4, 5}};
 
 struct Foo {
     int i;
@@ -66,3 +72,9 @@ struct Bar bar = { 1, {2, 3} };
 
 struct Foo;
 struct Foo {};
+
+typedef struct Foo _Foo;
+
+_Foo foo;
+const _Foo foo;
+_Foo foo = { 1, 2 };

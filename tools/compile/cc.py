@@ -138,7 +138,7 @@ class Function:
 
 
 class Variable:
-    def __init__(self, name: str, ty: Type) -> None:
+    def __init__(self, name: str, ty: Type, init=None) -> None:
         self._name = name
         self._type = ty
 
@@ -146,19 +146,12 @@ class Variable:
         return "(%s, %r)" % (self._name, self._type)
 
 
-class Label:
-    def __init__(self, name: str):
-        self._name = name
-
-    def __repr__(self) -> str:
-        return self._name
-
-
 class Scope(ABC):
-    def __init__(self) -> None:
-        self._symbolTable: dict[str, Type | Variable | Function | Label] = {}
+    def __init__(self, prev=None) -> None:
+        self._symbolTable: dict[str, Type | Variable | Function] = {}
+        self._prev: Scope = prev
 
-    def addSymbol(self, name: str, value: Type | Variable | Function | Label):
+    def addSymbol(self, name: str, value: Type | Variable | Function):
         if name in self._symbolTable:
             raise SemaError("redefined", name)
         self._symbolTable[name] = value
@@ -169,6 +162,8 @@ class Scope(ABC):
     def getSymbol(self, name: str):
         if name in self._symbolTable:
             return self._symbolTable[name]
+        if self._prev:
+            return self._prev.getSymbol(name)
         raise SemaError("undefined", name)
 
     def getType(self, name: str):
@@ -189,11 +184,10 @@ class Scope(ABC):
             raise SemaError("not a function", name)
         return func
 
-    def getLabel(self, name: str):
-        label = self.getSymbol(name)
-        if not isinstance(label, Label):
-            raise SemaError("not a label", name)
-        return label
+
+class GlobalScope(Scope):
+    def __init__(self) -> None:
+        super().__init__()
 
 
 class LocalScope(Scope):
@@ -203,9 +197,26 @@ class LocalScope(Scope):
         self._offset = offset
 
 
-class GlobalScope(Scope):
-    def __init__(self) -> None:
-        super().__init__()
+class Section:
+    def __init__(self, name: str) -> None:
+        assert name in [".text", ".rodata", ".data", ".bss"]
+        self.name = name
+        self.lines: list[str] = []
+
+    def add(self, s: str, *, indent="    "):
+        self.lines.append(indent + s)
+
+    def addLabel(self, s: str):
+        self.add(s + ":", indent="")
+        return s
+
+    @property
+    def _i(self, *, _d={"i": 0}):
+        _d["i"] += 1
+        return _d["i"]
+
+    def addLocalLabel(self):
+        return self.addLabel(".L%s%d" % (self.name[1], self._i))
 
 
 def wrap(func):
@@ -216,6 +227,8 @@ def wrap(func):
             self._path.pop()
         except SemaError as e:
             print("%s : %s" % (node.coord, e))
+            for i, _ in enumerate(reversed(self._path[:-1])):
+                print("%s%s" % ("  " * (i + 1), node.coord))
             sys.exit(1)
 
     return f
@@ -223,8 +236,16 @@ def wrap(func):
 
 class Compiler(c_ast.NodeVisitor):
     def __init__(self, o: io.StringIO) -> None:
-        self._o = o
         self._path = []
+        self._o = o
+
+        self._secText = Section(".text")
+        self._secRodata = Section(".rodata")
+        self._secData = Section(".data")
+        self._secBss = Section(".bss")
+
+        self._curFunc: Function = None
+
         self._scopes: list[Scope] = [GlobalScope()]
 
         self.addType(VoidType())
@@ -250,12 +271,13 @@ class Compiler(c_ast.NodeVisitor):
         # self.addType(FloatType("double", 8))
 
     def enterScope(self):
-        self.scopes.append(LocalScope())
+        self.scopes.append(LocalScope(self.curScope))
 
     def exitScope(self):
         self.scopes.pop()
 
-    def currentScope(self):
+    @property
+    def curScope(self):
         return self._scopes[-1]
 
     def addType(self, ty: Type, names: list[str] = None):
@@ -263,12 +285,9 @@ class Compiler(c_ast.NodeVisitor):
             names = []
         if ty.name():
             names.append(ty.name())
-        assert(len(names) > 0)
+        assert len(names) > 0
         for name in names:
-            self.currentScope().addSymbol(name, ty)
-
-    def pr(self, s: str):
-        print(s, file=self._o)
+            self.curScope.addSymbol(name, ty)
 
     @wrap
     def visit_TypeDecl(self, node: c_ast.TypeDecl):
@@ -277,7 +296,7 @@ class Compiler(c_ast.NodeVisitor):
     @wrap
     def visit_IdentifierType(self, node: c_ast.IdentifierType):
         name = " ".join(node.names)
-        node._rrisc32_type = self.getNamedType(name)
+        node._o_type = self.curScope.getType(name)
 
     @wrap
     def visit_Struct(self, node: c_ast.Struct):
@@ -294,6 +313,11 @@ class Compiler(c_ast.NodeVisitor):
     @wrap
     def visit_ArrayDecl(self, node: c_ast.ArrayDecl):
         pass
+
+    @wrap
+    def visit_Typedef(self, node: c_ast.Typedef):
+        self.generic_visit(node.type)
+        self.curScope.addSymbol(node.name, node.type._o_type)
 
     @wrap
     def visit_Union(self, _: c_ast.Union):
@@ -314,15 +338,15 @@ class Compiler(c_ast.NodeVisitor):
         raise SemaError("compound literal is not supported")
 
     @wrap
-    def visit_Typedef(self, node: c_ast.Typedef):
-        pass
-
-    @wrap
     def visit_Decl(self, node: c_ast.Decl):
         if node.bitsize:
             raise SemaError("bitfield is not supported")
         self.generic_visit(node.type)
         self.generic_visit(node.init)
+
+    @wrap
+    def visit_Goto(self, name: c_ast.Goto):
+        raise SemaError("goto is not supported")
 
     @wrap
     def generic_visit(self, node):
