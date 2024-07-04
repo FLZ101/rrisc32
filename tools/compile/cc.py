@@ -1,7 +1,7 @@
 import sys
 import io
 
-from abc import ABC
+from abc import ABC, abstractmethod
 
 from pycparser import c_ast
 
@@ -144,6 +144,21 @@ class Variable:
 
     def __repr__(self) -> str:
         return "(%s, %r)" % (self._name, self._type)
+
+
+# https://en.cppreference.com/w/c/language/value_category
+class Value(ABC):
+    @abstractmethod
+    def getType(self):
+        raise NotImplementedError()
+
+
+class LValue(Value):
+    pass
+
+
+class RValue(Value):
+    pass
 
 
 class Scope(ABC):
