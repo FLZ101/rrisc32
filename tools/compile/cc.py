@@ -16,6 +16,9 @@ class Type(ABC):
     def name(self) -> str:
         return getattr(self, "_name", "")
 
+    def isComplete(self) -> bool:
+        return True
+
     def size(self) -> int:
         return self._size
 
@@ -53,12 +56,24 @@ class FloatType(Type):
 
 
 class ArrayType(Type):
-    def __init__(self, base: Type, dim: int):
+    def __init__(self, base: Type, dim: int = None):
         self._base = base
         self._dim = dim
 
-        self._size = base.size() * dim
-        self._align = base.align()
+    def setDim(self, dim: int):
+        assert dim > 0
+        self._dim = dim
+
+    def isComplete(self) -> bool:
+        return self._dim is not None
+
+    def size(self) -> int:
+        if self._dim is not None:
+            return self._base.size() * self._dim
+        return 0
+
+    def align(self) -> int:
+        return self._base.align()
 
     def __repr__(self) -> str:
         return "%r[%d]" % (self._base, self._dim)
@@ -66,8 +81,7 @@ class ArrayType(Type):
 
 class Field:
     def __init__(self, ty: Type, name: str) -> None:
-        if name == "":
-            raise SemaError("anonymous field is not supported")
+        assert name
 
         self._type = ty
         self._name = name
@@ -79,19 +93,34 @@ class Field:
 
 class StructType(Type):
     def __init__(self, fields: list[Field], name: str = ""):
-        self._fields = fields
         self._name = name
+        self._size = 0
+        self._align = 0
 
-        self._align = 1
+        self.setFields(fields)
+
+    def setFields(self, fields: list[Field]):
+        self._fields = fields
+        if fields is None:
+            return
+
         offset = 0
+        align = 1
+
         for field in fields:
             m = field._type.align()
             n = offset % m
             if n:
                 offset += m - n
             field._offset = offset
-            self._align = max(self._align, m)
+            offset += field._type.size()
+            align = max(align, m)
+
         self._size = offset
+        self._align = align
+
+    def isComplete(self) -> bool:
+        return self._fields is not None
 
     def __repr__(self) -> str:
         if self._name:
@@ -149,7 +178,11 @@ class Variable:
 # https://en.cppreference.com/w/c/language/value_category
 class Value(ABC):
     @abstractmethod
-    def getType(self):
+    def getValue(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def getType(self) -> Type:
         raise NotImplementedError()
 
 
@@ -159,6 +192,30 @@ class LValue(Value):
 
 class RValue(Value):
     pass
+
+
+class ConstantInt(RValue):
+    def __init__(self, i: int, ty: Type) -> None:
+        self._i = i
+        self._type = ty
+
+    def getValue(self) -> int:
+        return self._i
+
+    def getType(self) -> Type:
+        return self._type
+
+
+class FunctionDesignator(RValue):
+    def __init__(self, name: str, ty: Type) -> None:
+        self._name = name
+        self._type = ty
+
+    def getValue(self) -> int:
+        return self._name
+
+    def getType(self) -> Type:
+        return self._type
 
 
 class Scope(ABC):
@@ -172,19 +229,28 @@ class Scope(ABC):
         self._symbolTable[name] = value
 
     def findSymbol(self, name: str):
-        return self._symbolTable.get(name)
-
-    def getSymbol(self, name: str):
         if name in self._symbolTable:
             return self._symbolTable[name]
         if self._prev:
             return self._prev.getSymbol(name)
-        raise SemaError("undefined", name)
+        return None
+
+    def getSymbol(self, name: str):
+        res = self.findSymbol(name)
+        if res is None:
+            raise SemaError("undefined", name)
+        return res
 
     def getType(self, name: str):
         ty = self.getSymbol(name)
         if not isinstance(ty, Type):
             raise SemaError("not a type", name)
+        return ty
+
+    def getStructType(self, name: str):
+        ty = self.getType(name)
+        if not isinstance(ty, StructType):
+            raise SemaError("not a struct type", name)
         return ty
 
     def getVariable(self, name: str):
@@ -234,34 +300,91 @@ class Section:
         return self.addLabel(".L%s%d" % (self.name[1], self._i))
 
 
-def wrap(func):
-    def f(self, node: c_ast.Node):
-        try:
-            self._path.append(node)
-            func(self, node)
-            self._path.pop()
-        except SemaError as e:
-            print("%s : %s" % (node.coord, e))
-            for i, _ in enumerate(reversed(self._path[:-1])):
-                print("%s%s" % ("  " * (i + 1), node.coord))
-            sys.exit(1)
-
-    return f
-
-
-class Compiler(c_ast.NodeVisitor):
+class Asm:
     def __init__(self) -> None:
-        self._path = []
-
         self._secText = Section(".text")
         self._secRodata = Section(".rodata")
         self._secData = Section(".data")
         self._secBss = Section(".bss")
 
-        self._curFunc: Function = None
+    def save(self, o: io.StringIO):
+        pass
 
+
+class NodeRecord:
+    def __init__(self) -> None:
+        self._type: Type = None
+        self._value: Value = None
+
+
+"""
+User-defined classes have __eq__() and __hash__() methods by default;
+with them, all objects compare unequal (except with themselves) and
+x.__hash__() returns an appropriate value such that x == y implies
+both that x is y and hash(x) == hash(y).
+"""
+_nodeRecords = {}
+
+
+def _getNodeRecord(node: c_ast.Node) -> NodeRecord:
+    if node not in _nodeRecords:
+        _nodeRecords[node] = NodeRecord()
+    return _nodeRecords[node]
+
+
+def _setType(node: c_ast.Node, ty: Type):
+    _getNodeRecord(node)._type = ty
+
+
+def _getType(node: c_ast.Node) -> Type:
+    return _getNodeRecord(node)._type
+
+
+def _setValue(node: c_ast.Node, value: Value):
+    _getNodeRecord(node)._value = value
+
+
+def _getValue(node: c_ast.Node) -> Value:
+    return _getNodeRecord(node)._value
+
+
+def _getConstantInt(node: c_ast.Node) -> int:
+    ci = _getValue(node)
+    if not isinstance(ci, ConstantInt):
+        raise SemaError("not an integral constant expression")
+    return ci.getValue()
+
+
+def wrap(func):
+    def __wrap(self, node: c_ast.Node):
+        try:
+            self._path.append(node)
+            func(self, node)
+            self._path.pop()
+        except SemaError as e:
+
+            def _clsName(_: c_ast.Node):
+                return _.__class__.__qualname__
+
+            print("%s %s : %s" % (_clsName(node), node.coord, e))
+            for i, _ in enumerate(reversed(self._path[1:-1])):
+                print("%s%s %s" % ("  " * (i + 1), _clsName(_), _.coord))
+            sys.exit(1)
+
+    return __wrap
+
+
+class Compiler(c_ast.NodeVisitor):
+    def __init__(self) -> None:
+        self._path = []
         self._scopes: list[Scope] = [GlobalScope()]
+        self._curFunc: Function = None
+        self._skipCodegen = False
+        self._asm = Asm()
 
+        self.addBasicTypes()
+
+    def addBasicTypes(self):
         self.addType(VoidType())
 
         self.addType(IntType("char", 1), ["signed char"])
@@ -284,8 +407,14 @@ class Compiler(c_ast.NodeVisitor):
         # self.addType(FloatType("float", 4))
         # self.addType(FloatType("double", 8))
 
-    def save(self, o: io.StringIO):
-        pass
+    def addType(self, ty: Type, names: list[str] = None):
+        if names is None:
+            names = []
+        if ty.name():
+            names.append(ty.name())
+        assert len(names) > 0
+        for name in names:
+            self.curScope.addSymbol(name, ty)
 
     def enterScope(self):
         self.scopes.append(LocalScope(self.curScope))
@@ -297,53 +426,68 @@ class Compiler(c_ast.NodeVisitor):
     def curScope(self):
         return self._scopes[-1]
 
-    def addType(self, ty: Type, names: list[str] = None):
-        if names is None:
-            names = []
-        if ty.name():
-            names.append(ty.name())
-        assert len(names) > 0
-        for name in names:
-            self.curScope.addSymbol(name, ty)
+    def save(self, o: io.StringIO):
+        self._asm.save(o)
 
     @wrap
     def visit_TypeDecl(self, node: c_ast.TypeDecl):
         self.visit(node.type)
+        _setType(node, _getType(node.type))
 
     @wrap
     def visit_IdentifierType(self, node: c_ast.IdentifierType):
         name = " ".join(node.names)
-        node._o_type = self.curScope.getType(name)
-
-    @wrap
-    def visit_Struct(self, node: c_ast.Struct):
-        for decl in node.decls:
-            if not decl.name:
-                raise SemaError("anonymous field is not supported")
-        for decl in node.decls:
-            self.visit(decl)
+        _setType(node, self.curScope.getType(name))
 
     @wrap
     def visit_ArrayDecl(self, node: c_ast.ArrayDecl):
-        if node.dim:
+        dim = node.dim
+        if dim:
             self.visit(node.dim)
-            dim = getattr(node.dim, "_o_int")
-            if dim is None or dim < 1:
-                raise SemaError(
-                    "not an integral constant expression which evaluates to a value greater than zero"
-                )
-        else:
-            pass
+            dim = _getConstantInt(node.dim)
+            if dim < 1:
+                raise SemaError("not greater than zero")
+
+        self.visit(node.type)
+        _setType(node, ArrayType(_getType(node.type), dim))
 
     @wrap
     def visit_PtrDecl(self, node: c_ast.PtrDecl):
         self.visit(node.type)
-        self._o_type = PointerType(node.type.o_type)
+        _setType(PointerType(_getType(node.type)))
 
     @wrap
     def visit_Typedef(self, node: c_ast.Typedef):
         self.visit(node.type)
-        self.curScope.addSymbol(node.name, node.type._o_type)
+        self.curScope.addSymbol(node.name, _getType(node.type))
+
+    @wrap
+    def visit_Struct(self, node: c_ast.Struct):
+        if node.decls is None:  # declaration
+            if not self.curScope.findSymbol(node.name):
+                self.curScope.addSymbol(node.name, StructType(None, node.name))
+            else:
+                self.curScope.getStructType(node.name)
+            return
+        if len(node.decls) == 0:
+            raise SemaError("struct with no field is not supported")
+
+        fields: list[Field] = []
+        for decl in node.decls:
+            decl: c_ast.Decl
+            if not decl.name:
+                raise SemaError("anonymous field is not supported")
+            self.visit(decl)
+            fields.append(Field(_getType(decl), decl.name))
+
+        ty = self.curScope.findSymbol(node.name)
+        if isinstance(ty, StructType) and not ty.isComplete():  # declared
+            ty.setFields(fields)
+            return
+
+        _setType(node, StructType(fields, node.name))
+        if node.name:
+            self.curScope.addSymbol(node.name, _getType(node))
 
     @wrap
     def visit_Union(self, _: c_ast.Union):
@@ -368,7 +512,8 @@ class Compiler(c_ast.NodeVisitor):
         if node.bitsize:
             raise SemaError("bitfield is not supported")
         self.visit(node.type)
-        self.visit(node.init)
+        if node.init:
+            self.visit(node.init)
 
     @wrap
     def visit_Goto(self, name: c_ast.Goto):
