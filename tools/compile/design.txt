@@ -58,3 +58,21 @@ scope state
     exit scope
         restore scope state
 """
+
+lvalue // has an address
+       // can & it
+
+       // a
+
+rvalue
+    // temporary
+    // may only exit in a register
+
+    // 13
+    // a + 1
+
+TODO:
+    constant
+    initialization
+    assignment
+    calling convention

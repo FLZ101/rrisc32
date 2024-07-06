@@ -22,8 +22,8 @@ class Type(ABC):
     def size(self) -> int:
         return self._size
 
-    def align(self) -> int:
-        return self._align
+    def alignment(self) -> int:
+        return self._alignment
 
     def __repr__(self) -> str:
         if self._name:
@@ -35,14 +35,14 @@ class VoidType(Type):
     def __init__(self):
         self._name = "void"
         self._size = 0
-        self._align = 0
+        self._alignment = 0
 
 
 class IntType(Type):
     def __init__(self, name: str, size: int):
         self._name = name
         self._size = size
-        self._align = size
+        self._alignment = size
 
     def isUnsigned(self):
         return "unsigned" in self._name
@@ -52,7 +52,7 @@ class FloatType(Type):
     def __init__(self, name: str, size: int):
         self._name = name
         self._size = size
-        self._align = size
+        self._alignment = size
 
 
 class ArrayType(Type):
@@ -72,8 +72,8 @@ class ArrayType(Type):
             return self._base.size() * self._dim
         return 0
 
-    def align(self) -> int:
-        return self._base.align()
+    def alignment(self) -> int:
+        return self._base.alignment()
 
     def __repr__(self) -> str:
         return "%r[%d]" % (self._base, self._dim)
@@ -91,11 +91,33 @@ class Field:
         return "(%r, %r)" % (self._type, self._name)
 
 
+def _align(offset: int, m: int) -> int:
+    n = offset % m
+    if n:
+        offset += m - n
+    return offset
+
+
+"""
+struct Foo {
+	int i;
+	char c;
+};
+
+struct Foo arr[4];
+
+sizeof(struct Foo) // 8
+sizeof(arr) // 32
+sizeof(arr[0]) // 4
+"""
+
+
 class StructType(Type):
     def __init__(self, fields: list[Field], name: str = ""):
         self._name = name
         self._size = 0
-        self._align = 0
+        self._alignment = 0
+        self._fill = 0
 
         self.setFields(fields)
 
@@ -105,19 +127,20 @@ class StructType(Type):
             return
 
         offset = 0
-        align = 1
+        alignment = 1
 
         for field in fields:
-            m = field._type.align()
-            n = offset % m
-            if n:
-                offset += m - n
-            field._offset = offset
-            offset += field._type.size()
-            align = max(align, m)
+            m = field._type.alignment()
+            alignment = max(alignment, m)
 
-        self._size = offset
-        self._align = align
+            offset = _align(offset, m)
+            field._offset = offset
+
+            offset += field._type.size()
+
+        self._alignment = alignment
+        self._fill = _align(offset, alignment) - offset
+        self._size = offset + self._fill
 
     def isComplete(self) -> bool:
         return self._fields is not None
@@ -132,7 +155,7 @@ class PointerType(Type):
     def __init__(self, base: Type) -> None:
         self._base = base
         self._size = 4
-        self._align = 4
+        self._alignment = 4
 
     def __repr__(self) -> str:
         return "%r*" % self._base
@@ -151,22 +174,44 @@ class FunctionType(Type):
     def __init__(self, sig: FunctionSignature) -> None:
         self._sig = sig
         self._size = 4
-        self._align = 4
+        self._alignment = 4
 
     def __repr__(self) -> str:
         return "%r" % self._sig
 
 
-class Function:
-    def __init__(self, name: str, sig: FunctionSignature) -> None:
+# https://en.cppreference.com/w/c/language/value_category
+class Value(ABC):
+    @abstractmethod
+    def getType(self) -> Type:
+        return self._type
+
+
+class LValue(Value):
+    pass
+
+
+class RValue(Value):
+    pass
+
+
+"""
+A function designator (the identifier introduced by a function declaration) is
+an expression of function type. When used in any context other than the
+address-of operator, sizeof, and _Alignof (the last two generate compile
+errors when applied to functions), the function designator is always converted
+to a non-lvalue pointer to function. Note that the function-call operator is
+defined for pointers to functions and not for function designators themselves.
+"""
+
+
+class Function(Value):
+    def __init__(self, name: str, ty: FunctionType) -> None:
         self._name = name
-        self._sig = sig
-
-    def __repr__(self) -> str:
-        return "%s%r" % (self._name, self._sig)
+        self._type = ty
 
 
-class Variable(ABC):
+class Variable(LValue):
     def __init__(self, name: str, ty: Type) -> None:
         self._name = name
         self._type = ty
@@ -201,47 +246,17 @@ class Argument(Variable):
         super().__init__(name, ty)
 
 
-# https://en.cppreference.com/w/c/language/value_category
-class Value(ABC):
-    @abstractmethod
-    def getValue(self):
-        raise NotImplementedError()
-
-    @abstractmethod
-    def getType(self) -> Type:
-        raise NotImplementedError()
-
-
-class LValue(Value):
-    pass
-
-
-class RValue(Value):
-    pass
-
-
-class ConstantInt(RValue):
-    def __init__(self, i: int, ty: Type) -> None:
-        self._i = i
-        self._type = ty
-
-    def getValue(self) -> int:
-        return self._i
-
-    def getType(self) -> Type:
-        return self._type
-
-
-class FunctionDesignator(RValue):
-    def __init__(self, name: str, ty: Type) -> None:
+class StringLiteral(LValue):
+    def __init__(self, name: str, ty: ArrayType) -> None:
+        super().__init__()
         self._name = name
         self._type = ty
 
-    def getValue(self) -> int:
-        return self._name
 
-    def getType(self) -> Type:
-        return self._type
+class ConstantInt(RValue):
+    def __init__(self, i: int, ty: IntType) -> None:
+        self._i = i
+        self._type = ty
 
 
 class Scope(ABC):
@@ -254,7 +269,7 @@ class Scope(ABC):
             raise SemaError("redefined", name)
         self._symbolTable[name] = value
 
-    def findSymbol(self, name: str):
+    def findSymbol(self, name: str) -> Type | Variable | Function:
         if name in self._symbolTable:
             return self._symbolTable[name]
         if self._prev:
@@ -302,6 +317,44 @@ class LocalScope(Scope):
         super().__init__()
 
         self._offset = offset
+
+
+_gScope = GlobalScope()
+
+
+def _addType(ty: Type, names: list[str] = None):
+    if names is None:
+        names = []
+    if ty.name():
+        names.append(ty.name())
+    assert len(names) > 0
+    for name in names:
+        _gScope.addSymbol(name, ty)
+
+
+def _addBasicTypes():
+    _addType(VoidType())
+
+    _addType(IntType("char", 1), ["signed char"])
+    _addType(IntType("short", 2), ["short int", "signed short", "signed short int"])
+    _addType(IntType("int", 4), ["signed int"])
+    _addType(IntType("long", 4), ["long int", "signed long", "signed long int"])
+    _addType(
+        IntType("long long", 8),
+        ["long long int", "signed long long", "signed long long int"],
+    )
+
+    _addType(IntType("unsigned char", 1))
+    _addType(IntType("unsigned short", 2), ["unsigned short int"])
+    _addType(IntType("unsigned int", 4))
+    _addType(IntType("unsigned long", 4), ["unsigned long int"])
+    _addType(IntType("unsigned long long", 8), ["unsigned long long int"])
+
+    # _addType(FloatType("float", 4))
+    # _addType(FloatType("double", 8))
+
+
+_addBasicTypes()
 
 
 class Section:
@@ -363,7 +416,10 @@ def _setType(node: c_ast.Node, ty: Type):
 
 
 def _getType(node: c_ast.Node) -> Type:
-    return _getNodeRecord(node)._type
+    r = _getNodeRecord(node)
+    if r._value:
+        return r._value.getType()
+    return r._type
 
 
 def _setValue(node: c_ast.Node, value: Value):
@@ -378,7 +434,7 @@ def _getConstantInt(node: c_ast.Node) -> int:
     ci = _getValue(node)
     if not isinstance(ci, ConstantInt):
         raise SemaError("not an integral constant expression")
-    return ci.getValue()
+    return ci._i
 
 
 def wrap(func):
@@ -403,44 +459,10 @@ def wrap(func):
 class Compiler(c_ast.NodeVisitor):
     def __init__(self) -> None:
         self._path = []
-        self._scopes: list[Scope] = [GlobalScope()]
-        self._curFunc: Function = None
-        self._skipCodegen = False
+        self._scopes: list[Scope] = [_gScope]
+        self._func: Function = None
         self._asm = Asm()
-
-        self.addBasicTypes()
-
-    def addBasicTypes(self):
-        self.addType(VoidType())
-
-        self.addType(IntType("char", 1), ["signed char"])
-        self.addType(
-            IntType("short", 2), ["short int", "signed short", "signed short int"]
-        )
-        self.addType(IntType("int", 4), ["signed int"])
-        self.addType(IntType("long", 4), ["long int", "signed long", "signed long int"])
-        self.addType(
-            IntType("long long", 8),
-            ["long long int", "signed long long", "signed long long int"],
-        )
-
-        self.addType(IntType("unsigned char", 1))
-        self.addType(IntType("unsigned short", 2), ["unsigned short int"])
-        self.addType(IntType("unsigned int", 4))
-        self.addType(IntType("unsigned long", 4), ["unsigned long int"])
-        self.addType(IntType("unsigned long long", 8), ["unsigned long long int"])
-
-        # self.addType(FloatType("float", 4))
-        # self.addType(FloatType("double", 8))
-
-    def addType(self, ty: Type, names: list[str] = None):
-        if names is None:
-            names = []
-        if ty.name():
-            names.append(ty.name())
-        assert len(names) > 0
-        for name in names:
-            self.curScope.addSymbol(name, ty)
+        self._skipCodegen = False
 
     def enterScope(self):
         self.scopes.append(LocalScope(self.curScope))
@@ -480,7 +502,7 @@ class Compiler(c_ast.NodeVisitor):
     @wrap
     def visit_PtrDecl(self, node: c_ast.PtrDecl):
         self.visit(node.type)
-        _setType(PointerType(_getType(node.type)))
+        _setType(node, PointerType(_getType(node.type)))
 
     @wrap
     def visit_Typedef(self, node: c_ast.Typedef):
@@ -549,12 +571,42 @@ class Compiler(c_ast.NodeVisitor):
         # local assign
 
     @wrap
+    def visit_Constant(self, node: c_ast.Constant):
+        pass
+
+    @wrap
+    def visit_ID(self, node: c_ast.ID):
+        _ = self.curScope.getSymbol()
+        if isinstance(_, Type):
+            _setType(node, _)
+        else:
+            _setValue(node, _)
+
+    @wrap
     def visit_InitList(self, node: c_ast.InitList):
         arr = []
         for expr in node.exprs:
             self.visit(expr)
             arr.append(_getValue(expr))
         _setValue(node, arr)
+
+    @wrap
+    def visit_UnaryOp(self, node: c_ast.UnaryOp):
+        op = node.op
+        if op == "sizeof":
+            _1 = self._skipCodegen
+            self._skipCodegen = True
+            self.visit(node.expr)
+            self._skipCodegen = _1
+
+            _setValue(
+                node,
+                ConstantInt(
+                    _getType(node.expr).size(), _gScope.getType("unsigned long")
+                ),
+            )
+        else:
+            raise SemaError("unknown unary operator", op)
 
     @wrap
     def visit_Goto(self, name: c_ast.Goto):
