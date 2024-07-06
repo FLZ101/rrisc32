@@ -72,3 +72,28 @@ int a6[2][3] = {{ 1, 2, 3}, {4, 5}};
         Constant: int, 4
         Constant: int, 5
 */
+
+void f() {
+  static int a1[] = {1};
+  int a2[] = {1};
+}
+/*
+FuncDef:
+    Decl: f, [], [], [], []
+      FuncDecl:
+        TypeDecl: f, [], None
+          IdentifierType: ['void']
+    Compound:
+      Decl: a1, [], [], ['static'], []
+        ArrayDecl: []
+          TypeDecl: a1, [], None
+            IdentifierType: ['int']
+        InitList:
+          Constant: int, 1
+      Decl: a2, [], [], [], []
+        ArrayDecl: []
+          TypeDecl: a2, [], None
+            IdentifierType: ['int']
+        InitList:
+          Constant: int, 1
+*/

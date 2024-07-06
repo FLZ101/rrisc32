@@ -166,13 +166,39 @@ class Function:
         return "%s%r" % (self._name, self._sig)
 
 
-class Variable:
-    def __init__(self, name: str, ty: Type, init=None) -> None:
+class Variable(ABC):
+    def __init__(self, name: str, ty: Type) -> None:
         self._name = name
         self._type = ty
 
     def __repr__(self) -> str:
         return "(%s, %r)" % (self._name, self._type)
+
+
+class GlobalVariable(Variable):
+    def __init__(self, name: str, ty: Type, _static=False) -> None:
+        super().__init__(name, ty)
+        self._static = _static
+
+
+class StaticVariable(Variable):
+    def __init__(self, name: str, ty: Type) -> None:
+        super().__init__(name, ty)
+
+
+class ExternVariable(Variable):
+    def __init__(self, name: str, ty: Type) -> None:
+        super().__init__(name, ty)
+
+
+class LocalVariable(Variable):
+    def __init__(self, name: str, ty: Type) -> None:
+        super().__init__(name, ty)
+
+
+class Argument(Variable):
+    def __init__(self, name: str, ty: Type) -> None:
+        super().__init__(name, ty)
 
 
 # https://en.cppreference.com/w/c/language/value_category
@@ -511,9 +537,24 @@ class Compiler(c_ast.NodeVisitor):
     def visit_Decl(self, node: c_ast.Decl):
         if node.bitsize:
             raise SemaError("bitfield is not supported")
+
         self.visit(node.type)
+
+        node.quals
+        node.name
         if node.init:
             self.visit(node.init)
+        # TODO: def(addr, type, expr)
+        # global/static
+        # local assign
+
+    @wrap
+    def visit_InitList(self, node: c_ast.InitList):
+        arr = []
+        for expr in node.exprs:
+            self.visit(expr)
+            arr.append(_getValue(expr))
+        _setValue(node, arr)
 
     @wrap
     def visit_Goto(self, name: c_ast.Goto):
