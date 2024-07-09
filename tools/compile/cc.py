@@ -1,7 +1,7 @@
 import sys
 import io
 
-from abc import ABC, abstractmethod
+from abc import ABC
 
 from pycparser import c_ast
 
@@ -11,15 +11,20 @@ class SemaError(Exception):
         super().__init__(*args)
 
 
+def semaWarning(*args):
+    print("[SemaWarning]", args, file=sys.stderr)
+
+
 # https://en.cppreference.com/w/c/language/type
 class Type(ABC):
     def name(self) -> str:
         return getattr(self, "_name", "")
 
     def isComplete(self) -> bool:
-        return True
+        return getattr(self, "_size") is not None
 
     def size(self) -> int:
+        assert self.isComplete()
         return self._size
 
     def alignment(self) -> int:
@@ -34,43 +39,57 @@ class Type(ABC):
 class VoidType(Type):
     def __init__(self):
         self._name = "void"
-        self._size = 0
-        self._alignment = 0
 
 
 class IntType(Type):
-    def __init__(self, name: str, size: int):
+    def __init__(self, name: str, size: int, unsigned=False, alignment: int = 0):
         self._name = name
         self._size = size
-        self._alignment = size
+        self._alignment = alignment or size
+        self._unsigned = unsigned
 
-    def isUnsigned(self):
-        return "unsigned" in self._name
+    def convert(self, i: int) -> int:
+        n = self._size * 8
+        a = (1 << (n - 1)) - (1 << n)
+        b = 0
+        c = (1 << (n - 1)) - 1
+        d = (1 << n) - 1
+
+        if self._unsigned:
+            if b <= i <= d:
+                return i
+            if a <= i < b:
+                return i + (1 << n)
+        else:
+            if a <= i <= c:
+                return i
+            if c < i <= d:
+                return i - (1 << n)
+
+        semaWarning("out of range", self, i)
 
 
 class FloatType(Type):
-    def __init__(self, name: str, size: int):
+    def __init__(self, name: str, size: int, alignment: int):
         self._name = name
         self._size = size
-        self._alignment = size
+        self._alignment = alignment
 
 
 class ArrayType(Type):
     def __init__(self, base: Type, dim: int = None):
         self._base = base
         self._dim = dim
+        self._layout()
 
     def setDim(self, dim: int):
-        assert dim > 0
         self._dim = dim
+        self._layout()
 
-    def isComplete(self) -> bool:
-        return self._dim is not None
-
-    def size(self) -> int:
-        if self._dim is not None:
-            return self._base.size() * self._dim
-        return 0
+    def _layout(self):
+        if self._dim is None:
+            return
+        self._size = self._base.size() * self._dim
 
     def alignment(self) -> int:
         return self._base.alignment()
@@ -115,21 +134,27 @@ sizeof(arr[0]) // 4
 class StructType(Type):
     def __init__(self, fields: list[Field], name: str = ""):
         self._name = name
-        self._size = 0
-        self._alignment = 0
-        self._fill = 0
-
-        self.setFields(fields)
+        self._fields = fields
+        self._layout()
 
     def setFields(self, fields: list[Field]):
         self._fields = fields
-        if fields is None:
+        self._layout()
+
+    def _layout(self):
+        if self._fields is None:
             return
+
+        self._fieldByName = {}
 
         offset = 0
         alignment = 1
 
-        for field in fields:
+        for field in self._fields:
+            if field._name in self._fieldByName:
+                raise SemaError('redefined field', field)
+            self._fieldByName[field._name] = field
+
             m = field._type.alignment()
             alignment = max(alignment, m)
 
@@ -141,9 +166,6 @@ class StructType(Type):
         self._alignment = alignment
         self._fill = _align(offset, alignment) - offset
         self._size = offset + self._fill
-
-    def isComplete(self) -> bool:
-        return self._fields is not None
 
     def __repr__(self) -> str:
         if self._name:
@@ -182,7 +204,6 @@ class FunctionType(Type):
 
 # https://en.cppreference.com/w/c/language/value_category
 class Value(ABC):
-    @abstractmethod
     def getType(self) -> Type:
         return self._type
 
@@ -246,17 +267,33 @@ class Argument(Variable):
         super().__init__(name, ty)
 
 
-class StringLiteral(LValue):
-    def __init__(self, name: str, ty: ArrayType) -> None:
+class StrLiteral(LValue):
+    def __init__(self, label: str, ty: ArrayType) -> None:
         super().__init__()
-        self._name = name
+        self._label = label
         self._type = ty
 
 
-class ConstantInt(RValue):
+# https://en.cppreference.com/w/c/language/constant_expression
+class Constant(RValue):
+    pass
+
+
+class IntConstant(Constant):
     def __init__(self, i: int, ty: IntType) -> None:
         self._i = i
         self._type = ty
+
+
+class SymConstant(Constant):
+    def __init__(self, name: str, ty: PointerType, offset: int = 0) -> None:
+        super().__init__()
+        self._name = name
+        self._type = ty
+        self._offset = offset
+
+        if offset:
+            assert ty.isComplete()
 
 
 class Scope(ABC):
@@ -338,20 +375,22 @@ def _addBasicTypes():
     _addType(IntType("char", 1), ["signed char"])
     _addType(IntType("short", 2), ["short int", "signed short", "signed short int"])
     _addType(IntType("int", 4), ["signed int"])
-    _addType(IntType("long", 4), ["long int", "signed long", "signed long int"])
     _addType(
-        IntType("long long", 8),
+        IntType("long", 4), ["long int", "signed long", "signed long int", "ssize_t"]
+    )
+    _addType(
+        IntType("long long", 8, False, 4),
         ["long long int", "signed long long", "signed long long int"],
     )
 
-    _addType(IntType("unsigned char", 1))
-    _addType(IntType("unsigned short", 2), ["unsigned short int"])
-    _addType(IntType("unsigned int", 4))
-    _addType(IntType("unsigned long", 4), ["unsigned long int"])
-    _addType(IntType("unsigned long long", 8), ["unsigned long long int"])
+    _addType(IntType("unsigned char", 1, True))
+    _addType(IntType("unsigned short", 2, True), ["unsigned short int"])
+    _addType(IntType("unsigned int", 4, True), ["unsigned"])
+    _addType(IntType("unsigned long", 4, True), ["unsigned long int", "size_t"])
+    _addType(IntType("unsigned long long", 8, True, 4), ["unsigned long long int"])
 
     # _addType(FloatType("float", 4))
-    # _addType(FloatType("double", 8))
+    # _addType(FloatType("double", 4))
 
 
 _addBasicTypes()
@@ -385,6 +424,15 @@ class Asm:
         self._secRodata = Section(".rodata")
         self._secData = Section(".data")
         self._secBss = Section(".bss")
+
+        self._strPool: dict[str, str] = {}
+
+    def addStr(self, s: str) -> str:
+        if s not in self._strPool:
+            label = self._secRodata.addLocalLabel()
+            self._secRodata.add(".asciz %s" % s)
+            self._strPool[s] = label
+        return self._strPool[s]
 
     def save(self, o: io.StringIO):
         pass
@@ -430,11 +478,48 @@ def _getValue(node: c_ast.Node) -> Value:
     return _getNodeRecord(node)._value
 
 
-def _getConstantInt(node: c_ast.Node) -> int:
+def _getIntConstant(node: c_ast.Node) -> int:
     ci = _getValue(node)
-    if not isinstance(ci, ConstantInt):
+    if not isinstance(ci, IntConstant):
         raise SemaError("not an integral constant expression")
     return ci._i
+
+
+def _unescapeStr(s: str) -> str:
+    arr = []
+
+    for c in s:
+        x = ord(c)
+        if x > 255:
+            raise SyntaxError("invalid character", c)
+
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\":
+            i += 1
+            match s[i : i + 1]:
+                case "n":
+                    arr.append("\n")
+                case "t":
+                    arr.append("\t")
+                case "0":
+                    arr.append("\0")
+                case '"':
+                    arr.append('"')
+                case "\\":
+                    arr.append("\\")
+                case "x":
+                    i += 2
+                    arr.append(chr(int(s[i - 1 : i + 1], base=16)))
+                case _:
+                    raise SyntaxError("invalid escape sequence", repr(s[i - 1 : i + 1]))
+        else:
+            arr.append(c)
+
+        i += 1
+
+    return "".join(arr)
 
 
 def wrap(func):
@@ -443,12 +528,12 @@ def wrap(func):
             self._path.append(node)
             func(self, node)
             self._path.pop()
-        except SemaError as e:
+        except SemaError as ex:
 
             def _clsName(_: c_ast.Node):
                 return _.__class__.__qualname__
 
-            print("%s %s : %s" % (_clsName(node), node.coord, e))
+            print("%s %s : %s" % (_clsName(node), node.coord, ex))
             for i, _ in enumerate(reversed(self._path[1:-1])):
                 print("%s%s %s" % ("  " * (i + 1), _clsName(_), _.coord))
             sys.exit(1)
@@ -492,7 +577,7 @@ class Compiler(c_ast.NodeVisitor):
         dim = node.dim
         if dim:
             self.visit(node.dim)
-            dim = _getConstantInt(node.dim)
+            dim = _getIntConstant(node.dim)
             if dim < 1:
                 raise SemaError("not greater than zero")
 
@@ -572,7 +657,47 @@ class Compiler(c_ast.NodeVisitor):
 
     @wrap
     def visit_Constant(self, node: c_ast.Constant):
-        pass
+        s: str = node.value
+        assert isinstance(s, str)
+
+        try:
+            if node.type == "char":
+                # https://en.cppreference.com/w/c/language/character_constant
+                assert s.startswith("'") and s.endswith("'")
+                v = _unescapeStr(s[1:-1])
+                assert len(v) == 1
+                _setValue(node, IntConstant(ord(v[0]), _gScope.getType("char")))
+                return
+
+            if node.type == "string":
+                # https://en.cppreference.com/w/c/language/string_literal
+                assert s.startswith('"') and s.endswith('"')
+                v = _unescapeStr(s[1:-1])
+                label = self._asm.addStr(s)
+                _setValue(
+                    node,
+                    StrLiteral(label, ArrayType(_gScope.getType("char"), len(v) + 1)),
+                )
+                return
+
+            if "int" in node.type:
+                # https://en.cppreference.com/w/c/language/integer_constant
+                ty = _gScope.getType(node.type)
+
+                s = s.lower()
+                while s.endswith("u") or s.endswith("l"):
+                    s = s[:-1]
+                if s.startswith("0x"):
+                    i = int(s[2:], base=16)
+                else:
+                    i = int(s, base=10)
+                _setValue(node, IntConstant(i, ty))
+                return
+
+            raise SemaError("%s is unsupported" % node.type)
+
+        except Exception as ex:
+            raise SemaError("invalid literal", str(ex))
 
     @wrap
     def visit_ID(self, node: c_ast.ID):
@@ -599,19 +724,26 @@ class Compiler(c_ast.NodeVisitor):
             self.visit(node.expr)
             self._skipCodegen = _1
 
+            ty = _getType(node.expr)
+            if not ty.isComplete():
+                raise SemaError("incomplete type", ty)
             _setValue(
                 node,
-                ConstantInt(
-                    _getType(node.expr).size(), _gScope.getType("unsigned long")
-                ),
+                IntConstant(ty.size(), _gScope.getType("size_t")),
             )
+        elif op == "-":
+            pass
         else:
             raise SemaError("unknown unary operator", op)
 
     @wrap
-    def visit_Goto(self, name: c_ast.Goto):
+    def visit_Cast(self, node: c_ast.Cast):
+        pass
+
+    @wrap
+    def visit_Goto(self, node: c_ast.Goto):
         raise SemaError("goto is not supported")
 
     @wrap
-    def generic_visit(self, node):
+    def generic_visit(self, node: c_ast.Node):
         return super().generic_visit(node)

@@ -22,6 +22,15 @@ int i3 = 10UL;
     Constant: unsigned long int, 10UL
 */
 
+unsigned i4 = -1U;
+/*
+  Decl: i4, [], [], [], []
+    TypeDecl: i4, [], None
+      IdentifierType: ['unsigned']
+    UnaryOp: -
+      Constant: unsigned int, 1U
+*/
+
 char *s = "hello";
 /*
   Decl: s, [], [], [], []

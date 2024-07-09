@@ -71,8 +71,108 @@ rvalue
     // 13
     // a + 1
 
+convertion
+    int
+    pointer
+    array
+
+cast
+
 TODO:
-    constant
     initialization
     assignment
-    calling convention
+
+max align
+    4
+
+layout structure
+
+calling convention
+    sp is 8 aligned
+
+    layout arguments
+        similar to layout structure
+            field align >= 4
+            overall align is 8
+
+    only a0, a1
+
+    return struct is not supported
+
+operator
+    all operands are 4 aligned; of the same type
+    layout operands
+
+    binary
+    unary
+
+can not pass structure
+
+all arguments and operands occupy one stack slot (i.e. 4B)
+
+struct initialization translated to assignments
+
+    struct Foo { int i, j, k; }
+    # local
+    struct Foo foo = {1, a+b, c};
+
+    is the same as
+
+    foo.i = 1;
+    foo.j = a+b;
+    foo.k = c;
+
+array initialization translated to assignments
+
+compiler runtime
+
+    memcpy
+    memset
+
+a + b
+    push b
+    push a
+    call __add
+        pop
+        pop
+        push result
+
+    optimization
+        not push compile time constants (e.g. 100, &g_foo, &g_foo + 1)
+
+f(a, b)
+    push b
+    push a
+    call f
+        pop
+        pop
+        push result
+
+a + f(b)
+    push b
+    call f
+    push a
+
+
+f(a+b, c+d)
+    push b
+    push a
+    call __add
+    push d
+    push c
+    call __add
+    call f
+
+f(a+g(b), c+g(d))
+
+a+b; // if the value is not used
+
+var arg functions
+    f(int, int, ...)
+
+        ...
+
+        restore sp
+        push result
+
+*p, a[i], foo.i are lvalue with a value of its operand (i.e. p, a + i, foo + offset(i))
