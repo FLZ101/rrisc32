@@ -176,3 +176,34 @@ var arg functions
         push result
 
 *p, a[i], foo.i are lvalue with a value of its operand (i.e. p, a + i, foo + offset(i))
+
+---
+
+max alignment is 4
+
+calling convention
+    arguments
+        a0, a1, ...
+        stack (4-aligned)
+    return
+        a0, a1
+
+    does not support passing/returning structure
+
+expression evaluation
+    operands
+        global, static
+        local
+        temporary
+            stack
+
+        result
+            stack
+
+        &
+        *
+
+optimization
+
+    push a0
+    pop a0
