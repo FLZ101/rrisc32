@@ -11,10 +11,6 @@ class SemaError(Exception):
         super().__init__(*args)
 
 
-def semaWarning(*args):
-    print("[SemaWarning]", args, file=sys.stderr)
-
-
 # https://en.cppreference.com/w/c/language/type
 class Type(ABC):
     def name(self) -> str:
@@ -23,12 +19,24 @@ class Type(ABC):
     def isComplete(self) -> bool:
         return getattr(self, "_size") is not None
 
+    def checkComplete(self):
+        if not self.isComplete():
+            raise SemaError("incomplete type", self)
+
     def size(self) -> int:
         assert self.isComplete()
         return self._size
 
     def alignment(self) -> int:
         return self._alignment
+
+    def p2align(self) -> int:
+        arr = [1, 2, 4]
+        assert self._alignment in arr
+        return arr.index(self._alignment)
+
+    def fill(self) -> int:
+        return getattr(self, "_fill", 0)
 
     def __repr__(self) -> str:
         if self._name:
@@ -50,23 +58,23 @@ class IntType(Type):
 
     def convert(self, i: int) -> int:
         n = self._size * 8
-        a = (1 << (n - 1)) - (1 << n)
-        b = 0
-        c = (1 << (n - 1)) - 1
-        d = (1 << n) - 1
+        mins = (1 << (n - 1)) - (1 << n)
+        minu = 0
+        maxs = (1 << (n - 1)) - 1
+        maxu = (1 << n) - 1
 
         if self._unsigned:
-            if b <= i <= d:
+            if minu <= i <= maxu:
                 return i
-            if a <= i < b:
+            if mins <= i < minu:
                 return i + (1 << n)
         else:
-            if a <= i <= c:
+            if mins <= i <= maxs:
                 return i
-            if c < i <= d:
+            if maxs < i <= maxu:
                 return i - (1 << n)
 
-        semaWarning("out of range", self, i)
+        raise SemaError("out of range", self, i)
 
 
 class FloatType(Type):
@@ -79,8 +87,8 @@ class FloatType(Type):
 class ArrayType(Type):
     def __init__(self, base: Type, dim: int = None):
         self._base = base
-        self._dim = dim
-        self._layout()
+        self._alignment = base.alignment()
+        self.setDim(dim)
 
     def setDim(self, dim: int):
         self._dim = dim
@@ -89,10 +97,9 @@ class ArrayType(Type):
     def _layout(self):
         if self._dim is None:
             return
+        if self._dim == 0:
+            raise SemaError("array of length 0 is not supported")
         self._size = self._base.size() * self._dim
-
-    def alignment(self) -> int:
-        return self._base.alignment()
 
     def __repr__(self) -> str:
         return "%r[%d]" % (self._base, self._dim)
@@ -134,8 +141,7 @@ sizeof(arr[0]) // 4
 class StructType(Type):
     def __init__(self, fields: list[Field], name: str = ""):
         self._name = name
-        self._fields = fields
-        self._layout()
+        self.setFields(fields)
 
     def setFields(self, fields: list[Field]):
         self._fields = fields
@@ -145,14 +151,17 @@ class StructType(Type):
         if self._fields is None:
             return
 
-        self._fieldByName = {}
+        if len(self._fields) == 0:
+            raise SemaError("structure with no field is not supported")
+
+        self._fieldByName: dict[str, Field] = {}
 
         offset = 0
         alignment = 1
 
         for field in self._fields:
             if field._name in self._fieldByName:
-                raise SemaError('redefined field', field)
+                raise SemaError("redefined field", field)
             self._fieldByName[field._name] = field
 
             m = field._type.alignment()
@@ -248,8 +257,9 @@ class GlobalVariable(Variable):
 
 
 class StaticVariable(Variable):
-    def __init__(self, name: str, ty: Type) -> None:
+    def __init__(self, name: str, ty: Type, label: str) -> None:
         super().__init__(name, ty)
+        self._label = label
 
 
 class ExternVariable(Variable):
@@ -268,10 +278,46 @@ class Argument(Variable):
 
 
 class StrLiteral(LValue):
-    def __init__(self, label: str, ty: ArrayType) -> None:
+    def __init__(self, label: str, ty: ArrayType, s: str) -> None:
         super().__init__()
         self._label = label
         self._type = ty
+        self._s = s
+
+
+# o.x
+class DotExpr(LValue):
+    def __init__(self, o: LValue, x: Field) -> None:
+        self._o = o
+        self._x = x
+        self._type = x._type
+
+
+# p->x
+class ArrowExpr(LValue):
+    def __init__(self, p: Value, x: Field) -> None:
+        self._p = p
+        self._x = x
+        self._type = x._type
+
+
+# *p
+class StarExpr(LValue):
+    def __init__(self, p: Value) -> None:
+        self._p = p
+
+        ty: PointerType = p.getType()
+        self._type = ty._base
+
+
+# p[i]
+class BrackeExpr(LValue):
+    def __init__(self, p: Value, i: Value) -> None:
+        self._p = p
+        self._i = i
+
+        ty: ArrayType | PointerType = p.getType()
+        self._type = ty._base
 
 
 # https://en.cppreference.com/w/c/language/constant_expression
@@ -294,6 +340,11 @@ class SymConstant(Constant):
 
         if offset:
             assert ty.isComplete()
+
+
+class TemporaryValue(RValue):
+    def __init__(self, ty: Type) -> None:
+        self._type = ty
 
 
 class Scope(ABC):
@@ -409,13 +460,21 @@ class Section:
         self.add(s + ":", indent="")
         return s
 
+    def addStaticLabel(self, s: str):
+        return self.addLabel("%s_%s%d" % (s, self.name[1], self._i_static))
+
+    def addLocalLabel(self):
+        return self.addLabel(".L_%s%d" % (self.name[1], self._i))
+
     @property
     def _i(self, *, _d={"i": 0}):
         _d["i"] += 1
         return _d["i"]
 
-    def addLocalLabel(self):
-        return self.addLabel(".L%s%d" % (self.name[1], self._i))
+    @property
+    def _i_static(self, *, _d={"i": 0}):
+        _d["i"] += 1
+        return _d["i"]
 
 
 class Asm:
@@ -522,23 +581,8 @@ def _unescapeStr(s: str) -> str:
     return "".join(arr)
 
 
-def wrap(func):
-    def __wrap(self, node: c_ast.Node):
-        try:
-            self._path.append(node)
-            func(self, node)
-            self._path.pop()
-        except SemaError as ex:
-
-            def _clsName(_: c_ast.Node):
-                return _.__class__.__qualname__
-
-            print("%s %s : %s" % (_clsName(node), node.coord, ex))
-            for i, _ in enumerate(reversed(self._path[1:-1])):
-                print("%s%s %s" % ("  " * (i + 1), _clsName(_), _.coord))
-            sys.exit(1)
-
-    return __wrap
+def _formatNode(node: c_ast.Node):
+    return "%s %s" % (node.__class__.__qualname__, node.coord)
 
 
 class Compiler(c_ast.NodeVisitor):
@@ -547,7 +591,17 @@ class Compiler(c_ast.NodeVisitor):
         self._scopes: list[Scope] = [_gScope]
         self._func: Function = None
         self._asm = Asm()
-        self._skipCodegen = False
+
+    def visit(self, node: c_ast.Node):
+        try:
+            self._path.append(node)
+            super().visit(node)
+            self._path.pop()
+        except SemaError as ex:
+            print("%s : %s" % (_formatNode(self._path[-1]), ex))
+            for i, _ in enumerate(reversed(self._path[1:-1])):
+                print("%s%s" % ("  " * (i + 1), _formatNode(_)))
+            sys.exit(1)
 
     def enterScope(self):
         self.scopes.append(LocalScope(self.curScope))
@@ -562,17 +616,14 @@ class Compiler(c_ast.NodeVisitor):
     def save(self, o: io.StringIO):
         self._asm.save(o)
 
-    @wrap
     def visit_TypeDecl(self, node: c_ast.TypeDecl):
         self.visit(node.type)
         _setType(node, _getType(node.type))
 
-    @wrap
     def visit_IdentifierType(self, node: c_ast.IdentifierType):
         name = " ".join(node.names)
         _setType(node, self.curScope.getType(name))
 
-    @wrap
     def visit_ArrayDecl(self, node: c_ast.ArrayDecl):
         dim = node.dim
         if dim:
@@ -584,17 +635,14 @@ class Compiler(c_ast.NodeVisitor):
         self.visit(node.type)
         _setType(node, ArrayType(_getType(node.type), dim))
 
-    @wrap
     def visit_PtrDecl(self, node: c_ast.PtrDecl):
         self.visit(node.type)
         _setType(node, PointerType(_getType(node.type)))
 
-    @wrap
     def visit_Typedef(self, node: c_ast.Typedef):
         self.visit(node.type)
         self.curScope.addSymbol(node.name, _getType(node.type))
 
-    @wrap
     def visit_Struct(self, node: c_ast.Struct):
         if node.decls is None:  # declaration
             if not self.curScope.findSymbol(node.name):
@@ -602,8 +650,6 @@ class Compiler(c_ast.NodeVisitor):
             else:
                 self.curScope.getStructType(node.name)
             return
-        if len(node.decls) == 0:
-            raise SemaError("struct with no field is not supported")
 
         fields: list[Field] = []
         for decl in node.decls:
@@ -622,40 +668,98 @@ class Compiler(c_ast.NodeVisitor):
         if node.name:
             self.curScope.addSymbol(node.name, _getType(node))
 
-    @wrap
     def visit_Union(self, _: c_ast.Union):
         raise SemaError("union is not supported")
 
-    @wrap
     def visit_Enum(self, _: c_ast.Enum):
         raise SemaError("enum is not supported")
 
-    @wrap
     def visit_NamedInitializer(self, node: c_ast.NamedInitializer):
         # https://gcc.gnu.org/onlinedocs/gcc/Designated-Inits.html
         raise SemaError("designated initializer is not supported")
 
-    @wrap
     def visit_CompoundLiteral(self, node: c_ast.CompoundLiteral):
         # https://gcc.gnu.org/onlinedocs/gcc/Compound-Literals.html
         raise SemaError("compound literal is not supported")
 
-    @wrap
     def visit_Decl(self, node: c_ast.Decl):
         if node.bitsize:
             raise SemaError("bitfield is not supported")
 
         self.visit(node.type)
+        ty = _getType(node.type)
 
-        node.quals
-        node.name
+        assert node.name
+        _global = self.curScope is _gScope
+        _static = "static" in node.quals
+        if _global or _static:
+            sec = self._asm._secData if node.init else self._asm._secBss
+
+            _ = ty.p2align()
+            if _ > 0:
+                sec.add(f".align {_}")
+
+            if _global:
+                label = sec.addLabel(node.name)
+                self.curScope.addSymbol(node.name, GlobalVariable(node.name, ty, _static))
+            else:
+                label = sec.addStaticLabel(node.name)
+                self.curScope.addSymbol(node.name, StaticVariable(node.name, ty, label))
+
+            if _static:
+                sec.add(f".local ${label}")
+            else:
+                sec.add(f".global ${label}")
+
+            sec.add(f'.type ${label}, "object"')
+
+            if not node.init:
+                ty.checkComplete()
+                sec.add(f".fill {ty.size()}")
+            else:
+                def _gen(ty: Type, init: c_ast.Node):
+                    if isinstance(ty, ArrayType):
+                        if not isinstance(init, c_ast.InitList):
+                            raise SemaError("invalid initializer")
+
+                        if not ty.isComplete():
+                            ty.setDim(n)
+                        ty.checkComplete()
+
+                        n = len(init.exprs)
+                        if n > ty._dim:
+                            raise SemaError("too many elements in array initializer")
+
+                        for i in range(n):
+                            _gen(ty._base, init.exprs[i])
+
+                        left = ty.size() - n * ty._base.size()
+                        if left > 0:
+                            sec.add(f".fill {left}")
+
+                    elif isinstance(ty, StructType):
+                        if not isinstance(init, c_ast.InitList):
+                            raise SemaError("invalid initializer")
+                        ty.checkComplete()
+
+                        n = len(init.exprs)
+                        if n > len(ty._fields):
+                            raise SemaError("too many elements in struct initializer")
+                    else:
+                        if isinstance(init, c_ast.InitList):
+                            raise SemaError("invalid initializer")
+
+                _gen(ty, node.init)
+
+            sec.add(f".size ${node.name}, {ty.size()}")
+            return
+
         if node.init:
             self.visit(node.init)
         # TODO: def(addr, type, expr)
         # global/static
         # local assign
 
-    @wrap
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
         assert isinstance(s, str)
@@ -664,19 +768,19 @@ class Compiler(c_ast.NodeVisitor):
             if node.type == "char":
                 # https://en.cppreference.com/w/c/language/character_constant
                 assert s.startswith("'") and s.endswith("'")
-                v = _unescapeStr(s[1:-1])
-                assert len(v) == 1
-                _setValue(node, IntConstant(ord(v[0]), _gScope.getType("char")))
+                s = _unescapeStr(s[1:-1])
+                assert len(s) == 1
+                _setValue(node, IntConstant(ord(s[0]), _gScope.getType("char")))
                 return
 
             if node.type == "string":
                 # https://en.cppreference.com/w/c/language/string_literal
                 assert s.startswith('"') and s.endswith('"')
-                v = _unescapeStr(s[1:-1])
+                s = _unescapeStr(s[1:-1] + "\0")
                 label = self._asm.addStr(s)
                 _setValue(
                     node,
-                    StrLiteral(label, ArrayType(_gScope.getType("char"), len(v) + 1)),
+                    StrLiteral(label, ArrayType(_gScope.getType("char"), len(s)), s),
                 )
                 return
 
@@ -699,7 +803,6 @@ class Compiler(c_ast.NodeVisitor):
         except Exception as ex:
             raise SemaError("invalid literal", str(ex))
 
-    @wrap
     def visit_ID(self, node: c_ast.ID):
         _ = self.curScope.getSymbol()
         if isinstance(_, Type):
@@ -707,26 +810,18 @@ class Compiler(c_ast.NodeVisitor):
         else:
             _setValue(node, _)
 
-    @wrap
-    def visit_InitList(self, node: c_ast.InitList):
-        arr = []
-        for expr in node.exprs:
-            self.visit(expr)
-            arr.append(_getValue(expr))
-        _setValue(node, arr)
+    def _skipCodegen(self) -> bool:
+        for node in reversed(self._path):
+            if isinstance(node, c_ast.UnaryOp) and node.op == "sizeof":
+                return True
+        return False
 
-    @wrap
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
         op = node.op
         if op == "sizeof":
-            _1 = self._skipCodegen
-            self._skipCodegen = True
             self.visit(node.expr)
-            self._skipCodegen = _1
-
             ty = _getType(node.expr)
-            if not ty.isComplete():
-                raise SemaError("incomplete type", ty)
+            ty.checkComplete()
             _setValue(
                 node,
                 IntConstant(ty.size(), _gScope.getType("size_t")),
@@ -736,14 +831,8 @@ class Compiler(c_ast.NodeVisitor):
         else:
             raise SemaError("unknown unary operator", op)
 
-    @wrap
     def visit_Cast(self, node: c_ast.Cast):
         pass
 
-    @wrap
     def visit_Goto(self, node: c_ast.Goto):
         raise SemaError("goto is not supported")
-
-    @wrap
-    def generic_visit(self, node: c_ast.Node):
-        return super().generic_visit(node)
