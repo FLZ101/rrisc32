@@ -1,10 +1,10 @@
-RUN: assemble -o %t.bar.o %S/bar.s
-RUN: assemble -o %t.foo.o %S/foo.s
-RUN: link -o %t.exe %t.bar.o %t.foo.o
+RUN: rrisc32-as -o %t.bar.o %S/bar.s
+RUN: rrisc32-as -o %t.foo.o %S/foo.s
+RUN: rrisc32-link -o %t.exe %t.bar.o %t.foo.o
 
-RUN: dump --sym %t.exe | filecheck %s --check-prefix=SYM
-RUN: dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT
-RUN: dump --hex .data %t.exe | filecheck %s --check-prefix=DATA
+RUN: rrisc32-dump --sym %t.exe | filecheck %s --check-prefix=SYM
+RUN: rrisc32-dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT
+RUN: rrisc32-dump --hex .data %t.exe | filecheck %s --check-prefix=DATA
 
 # SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
 # SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND

@@ -1,3 +1,3 @@
-add_executable(dump
+add_executable(rrisc32-dump
     main.cpp
 )

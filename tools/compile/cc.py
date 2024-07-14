@@ -1,5 +1,6 @@
 import sys
 import io
+import traceback
 
 from abc import ABC
 
@@ -11,13 +12,26 @@ class SemaError(Exception):
         super().__init__(*args)
 
 
+def semaWarn(*args):
+    print("[Warning]", *args, file=sys.stderr)
+
+
+def unreachable():
+    raise SemaError("unreachable")
+
+
+def _log2(i: int):
+    arr = [1, 2, 4, 8]
+    return arr.index(i)
+
+
 # https://en.cppreference.com/w/c/language/type
 class Type(ABC):
     def name(self) -> str:
         return getattr(self, "_name", "")
 
     def isComplete(self) -> bool:
-        return getattr(self, "_size") is not None
+        return getattr(self, "_size", None) is not None
 
     def checkComplete(self):
         if not self.isComplete():
@@ -31,9 +45,7 @@ class Type(ABC):
         return self._alignment
 
     def p2align(self) -> int:
-        arr = [1, 2, 4]
-        assert self._alignment in arr
-        return arr.index(self._alignment)
+        return _log2(self._alignment)
 
     def fill(self) -> int:
         return getattr(self, "_fill", 0)
@@ -56,7 +68,7 @@ class IntType(Type):
         self._alignment = alignment or size
         self._unsigned = unsigned
 
-    def convert(self, i: int) -> int:
+    def convert(self, i: int):
         n = self._size * 8
         mins = (1 << (n - 1)) - (1 << n)
         minu = 0
@@ -74,7 +86,11 @@ class IntType(Type):
             if maxs < i <= maxu:
                 return i - (1 << n)
 
-        raise SemaError("out of range", self, i)
+        semaWarn("out of range", self, i)
+        i %= 1 << n
+        if not self._unsigned:
+            i -= 1 << n
+        return i
 
 
 class FloatType(Type):
@@ -97,8 +113,6 @@ class ArrayType(Type):
     def _layout(self):
         if self._dim is None:
             return
-        if self._dim == 0:
-            raise SemaError("array of length 0 is not supported")
         self._size = self._base.size() * self._dim
 
     def __repr__(self) -> str:
@@ -193,9 +207,10 @@ class PointerType(Type):
 
 
 class FunctionSignature:
-    def __init__(self, ret: Type, args: list[Type]) -> None:
+    def __init__(self, ret: Type, args: list[Type], ellipsis: bool) -> None:
         self._ret = ret
         self._args = args
+        self._ellipsis = ellipsis
 
     def __repr__(self) -> str:
         return "(%r => %r)" % (self._args, self._ret)
@@ -278,15 +293,17 @@ class Argument(Variable):
 
 
 class StrLiteral(LValue):
-    def __init__(self, label: str, ty: ArrayType, s: str) -> None:
+    def __init__(self, s: str, sOrig: str) -> None:
         super().__init__()
-        self._label = label
-        self._type = ty
         self._s = s
+        self._sOrig = sOrig
+        self._type = ArrayType(_type("char"), len(s))
+
+        self._label = ""
 
 
 # o.x
-class DotExpr(LValue):
+class MemberAccessExpr(LValue):
     def __init__(self, o: LValue, x: Field) -> None:
         self._o = o
         self._x = x
@@ -294,7 +311,7 @@ class DotExpr(LValue):
 
 
 # p->x
-class ArrowExpr(LValue):
+class MemberAccessThroughPointerExpr(LValue):
     def __init__(self, p: Value, x: Field) -> None:
         self._p = p
         self._x = x
@@ -302,7 +319,7 @@ class ArrowExpr(LValue):
 
 
 # *p
-class StarExpr(LValue):
+class PointerDereferenceExpr(LValue):
     def __init__(self, p: Value) -> None:
         self._p = p
 
@@ -311,13 +328,26 @@ class StarExpr(LValue):
 
 
 # p[i]
-class BrackeExpr(LValue):
+class ArraySubscriptExpr(LValue):
     def __init__(self, p: Value, i: Value) -> None:
         self._p = p
         self._i = i
 
         ty: ArrayType | PointerType = p.getType()
         self._type = ty._base
+
+
+# &o
+class AddressOfExpr(RValue):
+    def __init__(self, o: LValue, ty: PointerType = None):
+        self._o = o
+        self._type = ty or PointerType(o.getType())
+
+
+class CastExpr(RValue):
+    def __init__(self, o: Value, ty: Type) -> None:
+        self._o = 0
+        self._type = ty
 
 
 # https://en.cppreference.com/w/c/language/constant_expression
@@ -327,6 +357,12 @@ class Constant(RValue):
 
 class IntConstant(Constant):
     def __init__(self, i: int, ty: IntType) -> None:
+        self._i = i
+        self._type = ty
+
+
+class PtrConstant(Constant):
+    def __init__(self, i: int, ty: PointerType) -> None:
         self._i = i
         self._type = ty
 
@@ -345,6 +381,141 @@ class SymConstant(Constant):
 class TemporaryValue(RValue):
     def __init__(self, ty: Type) -> None:
         self._type = ty
+
+
+# https://en.cppreference.com/w/c/language/type#Compatible_types
+def isCompatible(t1: Type, t2: Type):
+    if t1 is t2:
+        return True
+
+    if not t1.isComplete() or not t2.isComplete():
+        return False
+
+    if isinstance(t1, PointerType) and isinstance(t2, PointerType):
+        return isCompatible(t1._base, t2._base)
+
+    if isinstance(t1, ArrayType) and isinstance(t2, ArrayType):
+        return t1.size() == t2.size() and isCompatible(t1._base, t2._base)
+
+    if isinstance(t1, StructType) and isinstance(t2, StructType):
+        if len(t1._fields) != len(t2._fields):
+            return False
+        for i in range(len(t1._fields)):
+            f1 = t1._fields[i]
+            f2 = t2._fields[i]
+            if f1._name != f2._name or not isCompatible(f1._type, f2._type):
+                return False
+        return True
+
+    if isinstance(t1, FunctionType) and isinstance(t2, FunctionType):
+        sig1 = t1._sig
+        sig2 = t2._sig
+        if sig1._ellipsis != sig2._ellipsis:
+            return False
+        if len(sig1._args) != len(sig2._args):
+            return False
+        for i in range(sig1._args):
+            at1 = sig1._args[i]
+            at2 = sig2._args[i]
+            if isCompatible(at1, at2):
+                continue
+
+            def _isArrayToPointerCompatible(_t1: Type, _t2: Type):
+                return (
+                    isinstance(_t1, ArrayType)
+                    and isinstance(_t2, PointerType)
+                    and isCompatible(_t1._base, _t2._base)
+                )
+
+            def _isFunctionToPointerCompatible(_t1: Type, _t2: Type):
+                return (
+                    isinstance(_t1, FunctionType)
+                    and isinstance(_t2, PointerType)
+                    and isinstance(_t2._base, FunctionType)
+                    and isCompatible(_t1, _t2._base)
+                )
+
+            if _isArrayToPointerCompatible(at1, at2):
+                continue
+            if _isArrayToPointerCompatible(at2, at1):
+                continue
+
+            if _isFunctionToPointerCompatible(at1, at2):
+                continue
+            if _isFunctionToPointerCompatible(at2, at1):
+                continue
+
+            return False
+
+        return True
+
+    return False
+
+
+# https://en.cppreference.com/w/c/language/conversion
+def _convert(t1: Type, v: Value):
+    t2 = v.getType()
+
+    if isCompatible(t1, t2):
+        v._type = t1
+        return v
+
+    # array to pointer conversion
+    """
+    int arr[] = {1, 2, 3};
+    int *p1 = arr; // &arr[0]
+    int *p2 = &arr; // error: initialization of 'int *' from incompatible pointer type 'int (*)[3]'
+    int **p3 = &arr; // error: initialization of 'int **' from incompatible pointer type 'int (*)[3]'
+    """
+    if (
+        isinstance(t1, PointerType)
+        and isinstance(t2, ArrayType)
+        and isinstance(v, LValue)
+        and isCompatible(t1._base, t2._base)
+    ):
+        if isinstance(v, StrLiteral):
+            assert v._label
+            return SymConstant(v._label, PointerType(v._type._base))
+        return AddressOfExpr(ArraySubscriptExpr(v, IntConstant(0, _type("size_t"))))
+
+    # function to pointer conversion
+    if (
+        isinstance(t1, PointerType)
+        and isinstance(t2, FunctionType)
+        and isCompatible(t1._base, t2)
+    ):
+        return AddressOfExpr(v, t1)
+
+    # integer conversion
+    if isinstance(t1, IntType) and isinstance(t2, IntType):
+        if isinstance(v, IntConstant):
+            return IntConstant(t1.convert(v._i), t1)
+        return CastExpr(v, t1)
+
+    # pointer conversion
+    if (
+        isinstance(t1, PointerType)
+        and isinstance(t2, PointerType)
+        and t2._base is _type("void")
+    ):
+        v._type = t1
+        return v
+    if (
+        isinstance(t1, PointerType)
+        and t1._base is _type("void")
+        and isinstance(v, IntConstant)
+        and v._i == 0
+    ):
+        return PtrConstant(0, PointerType(_type("void")))
+
+    return None
+
+
+def convert(t1: Type, v: Value):
+    res = _convert(t1, v)
+    if res is None:
+        raise SemaError(f"can not convert {res.getType()} to {t1}")
+    return res
 
 
 class Scope(ABC):
@@ -447,14 +618,36 @@ def _addBasicTypes():
 _addBasicTypes()
 
 
+def _type(name: str) -> Type:
+    return _gScope.getType(name)
+
+
 class Section:
     def __init__(self, name: str) -> None:
         assert name in [".text", ".rodata", ".data", ".bss"]
         self.name = name
         self.lines: list[str] = []
 
+        self.add(name)
+
+    def addEmptyLine(self):
+        self.lines.append("")
+
     def add(self, s: str, *, indent="    "):
         self.lines.append(indent + s)
+
+    def addInt(self, ic: IntConstant):
+        c = "bhwq"[_log2(ic.getType().size())]
+        self.add(f".d{c} {ic._i}")
+
+    def addPtr(self, pc: PtrConstant):
+        self.add(f".dw {pc._i}")
+
+    def addSym(self, sc: SymConstant):
+        if sc._offset == 0:
+            self.add(f".dw ${sc._name}")
+        else:
+            self.add(f".dw +(${sc._name} {sc._offset})")
 
     def addLabel(self, s: str):
         self.add(s + ":", indent="")
@@ -476,6 +669,11 @@ class Section:
         _d["i"] += 1
         return _d["i"]
 
+    def save(self, o: io.StringIO):
+        for line in self.lines:
+            print(line, file=o)
+        print("", file=o)
+
 
 class Asm:
     def __init__(self) -> None:
@@ -486,15 +684,19 @@ class Asm:
 
         self._strPool: dict[str, str] = {}
 
-    def addStr(self, s: str) -> str:
+    def addStr(self, sLit: StrLiteral) -> str:
+        s = sLit._s
         if s not in self._strPool:
             label = self._secRodata.addLocalLabel()
-            self._secRodata.add(".asciz %s" % s)
+            self._secRodata.add(f".asciz {sLit._sOrig}")
             self._strPool[s] = label
-        return self._strPool[s]
+        sLit._label = self._strPool[s]
 
     def save(self, o: io.StringIO):
-        pass
+        self._secText.save(o)
+        self._secRodata.save(o)
+        self._secData.save(o)
+        self._secBss.save(o)
 
 
 class NodeRecord:
@@ -538,10 +740,17 @@ def _getValue(node: c_ast.Node) -> Value:
 
 
 def _getIntConstant(node: c_ast.Node) -> int:
-    ci = _getValue(node)
-    if not isinstance(ci, IntConstant):
+    ic = _getValue(node)
+    if not isinstance(ic, IntConstant):
         raise SemaError("not an integral constant expression")
-    return ci._i
+    return ic._i
+
+
+def _getStrLiteral(node: c_ast.Node) -> StrLiteral:
+    sLit = _getValue(node)
+    if not isinstance(sLit, StrLiteral):
+        raise SemaError("not a string literal")
+    return sLit
 
 
 def _unescapeStr(s: str) -> str:
@@ -592,12 +801,17 @@ class Compiler(c_ast.NodeVisitor):
         self._func: Function = None
         self._asm = Asm()
 
+    def _parent(self):
+        assert len(self._path) >= 2
+        return self._path[-2]
+
     def visit(self, node: c_ast.Node):
         try:
             self._path.append(node)
             super().visit(node)
             self._path.pop()
         except SemaError as ex:
+            print(traceback.format_exc())
             print("%s : %s" % (_formatNode(self._path[-1]), ex))
             for i, _ in enumerate(reversed(self._path[1:-1])):
                 print("%s%s" % ("  " * (i + 1), _formatNode(_)))
@@ -697,36 +911,51 @@ class Compiler(c_ast.NodeVisitor):
 
             _ = ty.p2align()
             if _ > 0:
+                sec.addEmptyLine()
                 sec.add(f".align {_}")
 
             if _global:
                 label = sec.addLabel(node.name)
-                self.curScope.addSymbol(node.name, GlobalVariable(node.name, ty, _static))
+                self.curScope.addSymbol(
+                    node.name, GlobalVariable(node.name, ty, _static)
+                )
             else:
                 label = sec.addStaticLabel(node.name)
                 self.curScope.addSymbol(node.name, StaticVariable(node.name, ty, label))
-
-            if _static:
-                sec.add(f".local ${label}")
-            else:
-                sec.add(f".global ${label}")
-
-            sec.add(f'.type ${label}, "object"')
 
             if not node.init:
                 ty.checkComplete()
                 sec.add(f".fill {ty.size()}")
             else:
+
                 def _gen(ty: Type, init: c_ast.Node):
                     if isinstance(ty, ArrayType):
+                        if ty._base in [
+                            _type("char"),
+                            _type("unsigned char"),
+                        ]:
+                            if not isinstance(init, c_ast.InitList):
+                                self.visit(init)
+                                sLit = _getStrLiteral(init)
+                                sec.add(f".asciz {sLit._sOrig}")
+                                n = len(sLit._s)
+                                if not ty.isComplete():
+                                    ty.setDim(n)
+                                if n > ty._dim:
+                                    raise SemaError("initializer-string is too long")
+                                left = ty.size() - n
+                                if left > 0:
+                                    sec.add(f".fill {left}")
+                                return
+
                         if not isinstance(init, c_ast.InitList):
                             raise SemaError("invalid initializer")
 
+                        n = len(init.exprs)
                         if not ty.isComplete():
                             ty.setDim(n)
                         ty.checkComplete()
 
-                        n = len(init.exprs)
                         if n > ty._dim:
                             raise SemaError("too many elements in array initializer")
 
@@ -745,20 +974,47 @@ class Compiler(c_ast.NodeVisitor):
                         n = len(init.exprs)
                         if n > len(ty._fields):
                             raise SemaError("too many elements in struct initializer")
+
+                        for i in range(n):
+                            field = ty._fields[i]
+                            _gen(field._type, init.exprs[i])
+                            left = (
+                                (ty._fields[i]._offset if i < n - 1 else ty.size())
+                                - field._offset
+                                - field._type.size()
+                            )
+                            if left > 0:
+                                sec.add(f".fill {left}")
                     else:
                         if isinstance(init, c_ast.InitList):
                             raise SemaError("invalid initializer")
 
+                        self.visit(init)
+                        v = convert(ty, _getValue(init))
+
+                        if not isinstance(v, Constant):
+                            raise SemaError("initializer element is not constant")
+
+                        if isinstance(v, IntConstant):
+                            sec.addInt(v)
+                        elif isinstance(v, SymConstant):
+                            sec.addSym(v)
+                        elif isinstance(v, PtrConstant):
+                            sec.addPtr(v)
+                        else:
+                            unreachable()
+
                 _gen(ty, node.init)
 
-            sec.add(f".size ${node.name}, {ty.size()}")
-            return
+            if _static:
+                sec.add(f".local ${label}")
+            else:
+                sec.add(f".global ${label}")
 
-        if node.init:
-            self.visit(node.init)
-        # TODO: def(addr, type, expr)
-        # global/static
-        # local assign
+            sec.add(f'.type ${label}, "object"')
+            sec.add(f".size ${label}, {ty.size()}")
+
+            return
 
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
@@ -770,23 +1026,32 @@ class Compiler(c_ast.NodeVisitor):
                 assert s.startswith("'") and s.endswith("'")
                 s = _unescapeStr(s[1:-1])
                 assert len(s) == 1
-                _setValue(node, IntConstant(ord(s[0]), _gScope.getType("char")))
+                _setValue(node, IntConstant(ord(s[0]), _type("char")))
                 return
 
             if node.type == "string":
                 # https://en.cppreference.com/w/c/language/string_literal
                 assert s.startswith('"') and s.endswith('"')
                 s = _unescapeStr(s[1:-1] + "\0")
-                label = self._asm.addStr(s)
-                _setValue(
-                    node,
-                    StrLiteral(label, ArrayType(_gScope.getType("char"), len(s)), s),
-                )
+                sLit = StrLiteral(s, node.value)
+                _setValue(node, sLit)
+
+                def _shouldAdd():
+                    p = self._parent()
+                    if isinstance(p, c_ast.Decl) and isinstance(
+                        _getType(p.type), ArrayType
+                    ):
+                        return False
+                    return True
+
+                if _shouldAdd():
+                    self._asm.addStr(sLit)
+
                 return
 
             if "int" in node.type:
                 # https://en.cppreference.com/w/c/language/integer_constant
-                ty = _gScope.getType(node.type)
+                ty = _type(node.type)
 
                 s = s.lower()
                 while s.endswith("u") or s.endswith("l"):
@@ -824,8 +1089,10 @@ class Compiler(c_ast.NodeVisitor):
             ty.checkComplete()
             _setValue(
                 node,
-                IntConstant(ty.size(), _gScope.getType("size_t")),
+                IntConstant(ty.size(), _type("size_t")),
             )
+        elif op == "&":
+            pass
         elif op == "-":
             pass
         else:

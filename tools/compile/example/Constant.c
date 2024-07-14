@@ -31,11 +31,20 @@ unsigned i4 = -1U;
       Constant: unsigned int, 1U
 */
 
-char *s = "hello";
+char *s1 = "hello";
 /*
   Decl: s, [], [], [], []
     PtrDecl: []
       TypeDecl: s, [], None
         IdentifierType: ['char']
     Constant: string, "hello"
+*/
+
+char s2[] = "world";
+/*
+  Decl: s2, [], [], [], []
+    ArrayDecl: []
+      TypeDecl: s2, [], None
+        IdentifierType: ['char']
+    Constant: string, "world"
 */

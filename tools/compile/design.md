@@ -63,9 +63,39 @@
 
 * implicit convertion
 
-  * int
-  * pointer
-  * array
+  * Conversion as if by assignment
+
+    * assignment
+    * scalar initialization
+    * function-call expression
+    * return statement
+
+  * Default argument promotions
+
+    * a variadic function
+
+    ---
+
+    * integer promotion
+
+  * Usual arithmetic conversions
+
+    * integers
+
+      * integer promotion
+      * common type
+
+  * Lvalue conversion
+
+    * The value remains the same, but loses its lvalue properties (the address may no longer be taken).
+
+  * Array to pointer conversion
+
+    * conversion to the non-lvalue pointer to its first element
+
+  * Function to pointer conversion
+
+    * a conversion to the non-lvalue pointer to the function designated by the expression
 
 * cast
 
@@ -133,3 +163,5 @@
   push a0
   pop a0
   ```
+
+* statements do not change sp

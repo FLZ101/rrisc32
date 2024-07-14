@@ -1,7 +1,7 @@
-# RUN: assemble -o %t %s
-# RUN: dump --dis .text %t | filecheck %s --check-prefix=TEXT
-# RUN: dump --sym %t | filecheck %s --check-prefix=SYM
-# RUN: dump --rel %t | filecheck %s --check-prefix=REL
+# RUN: rrisc32-as -o %t %s
+# RUN: rrisc32-dump --dis .text %t | filecheck %s --check-prefix=TEXT
+# RUN: rrisc32-dump --sym %t | filecheck %s --check-prefix=SYM
+# RUN: rrisc32-dump --rel %t | filecheck %s --check-prefix=REL
 
   .text
   .rep 10

@@ -1,7 +1,7 @@
-# RUN: assemble -o %t.o %s
-# RUN: dump --sym %t.o | filecheck %s --check-prefix=SYM
-# RUN: dump --dis .text %t.o | filecheck %s --check-prefix=TEXT
-# RUN: dump --hex .data %t.o | filecheck %s --check-prefix=DATA
+# RUN: rrisc32-as -o %t.o %s
+# RUN: rrisc32-dump --sym %t.o | filecheck %s --check-prefix=SYM
+# RUN: rrisc32-dump --dis .text %t.o | filecheck %s --check-prefix=TEXT
+# RUN: rrisc32-dump --hex .data %t.o | filecheck %s --check-prefix=DATA
 
   .text
   call $g

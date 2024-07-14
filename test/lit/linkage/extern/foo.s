@@ -1,5 +1,5 @@
-# RUN: assemble -o %t.o %s
-# RUN: dump --sym %t.o | filecheck %s --check-prefix=SYM
+# RUN: rrisc32-as -o %t.o %s
+# RUN: rrisc32-dump --sym %t.o | filecheck %s --check-prefix=SYM
 
   .text
   .rep 2048

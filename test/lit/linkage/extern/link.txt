@@ -1,11 +1,11 @@
-RUN: assemble -o %t.bar.o %S/bar.s
-RUN: assemble -o %t.foo.o %S/foo.s
-RUN: link -o %t.exe %t.bar.o %t.foo.o
+RUN: rrisc32-as -o %t.bar.o %S/bar.s
+RUN: rrisc32-as -o %t.foo.o %S/foo.s
+RUN: rrisc32-link -o %t.exe %t.bar.o %t.foo.o
 
-RUN: dump --sec %t.exe | filecheck %s --check-prefix=SEC
-RUN: dump --sym %t.exe | filecheck %s --check-prefix=SYM
-RUN: dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT
-RUN: dump --hex .data %t.exe | filecheck %s --check-prefix=DATA
+RUN: rrisc32-dump --sec %t.exe | filecheck %s --check-prefix=SEC
+RUN: rrisc32-dump --sym %t.exe | filecheck %s --check-prefix=SYM
+RUN: rrisc32-dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT
+RUN: rrisc32-dump --hex .data %t.exe | filecheck %s --check-prefix=DATA
 
 SEC:      Idx     Addr    Off     Size    Link    Info    AddrAli EntSize Flags   Type    Name
 SEC:      02      1000    1000    2030    00      00      1000    00      AE      PROGBIT .text

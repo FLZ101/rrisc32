@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -e
+
+cmake_binary_dir=@CMAKE_BINARY_DIR@
+cmake_current_binary_dir=@CMAKE_CURRENT_BINARY_DIR@
+
+PATH=$cmake_binary_dir/python/bin:$PATH
+export PATH
+
+which pip
+which python
+
+if ! pip freeze | grep pycparser >/dev/null ; then
+  pip install -U pip
+  pip install -r requirements.txt
+fi
+
+python -m nuitka --follow-imports \
+  --output-dir=$cmake_current_binary_dir \
+  --output-filename=$cmake_current_binary_dir/rrisc32-cc \
+  main.py

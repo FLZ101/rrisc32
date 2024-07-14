@@ -1,15 +1,15 @@
-# RUN: assemble -o %t.o %s
-# RUN: link -o %t.exe %t.o
+# RUN: rrisc32-as -o %t.o %s
+# RUN: rrisc32-link -o %t.exe %t.o
 
-# RUN: dump --sym %t.o | filecheck %s --check-prefix=SYM-O
-# RUN: dump --rel %t.o | filecheck %s --check-prefix=REL-O
-# RUN: dump --dis .text %t.o | filecheck %s --check-prefix=TEXT-O
-# RUN: dump --hex .data %t.o | filecheck %s --check-prefix=DATA-O
+# RUN: rrisc32-dump --sym %t.o | filecheck %s --check-prefix=SYM-O
+# RUN: rrisc32-dump --rel %t.o | filecheck %s --check-prefix=REL-O
+# RUN: rrisc32-dump --dis .text %t.o | filecheck %s --check-prefix=TEXT-O
+# RUN: rrisc32-dump --hex .data %t.o | filecheck %s --check-prefix=DATA-O
 
-# RUN: dump --sec %t.exe | filecheck %s --check-prefix=SEC-E
-# RUN: dump --seg %t.exe | filecheck %s --check-prefix=SEG-E
-# RUN: dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT-E
-# RUN: dump --hex .data %t.exe | filecheck %s --check-prefix=DATA-E
+# RUN: rrisc32-dump --sec %t.exe | filecheck %s --check-prefix=SEC-E
+# RUN: rrisc32-dump --seg %t.exe | filecheck %s --check-prefix=SEG-E
+# RUN: rrisc32-dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT-E
+# RUN: rrisc32-dump --hex .data %t.exe | filecheck %s --check-prefix=DATA-E
 
   .text
 

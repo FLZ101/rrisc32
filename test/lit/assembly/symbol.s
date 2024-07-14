@@ -1,6 +1,6 @@
-# RUN: assemble -o %t %s
-# RUN: dump --sym %t | filecheck %s --check-prefix=SYM
-# RUN: dump --hex .data %t | filecheck %s --check-prefix=DATA
+# RUN: rrisc32-as -o %t %s
+# RUN: rrisc32-dump --sym %t | filecheck %s --check-prefix=SYM
+# RUN: rrisc32-dump --hex .data %t | filecheck %s --check-prefix=DATA
 
   .text
   .type $f, "function"

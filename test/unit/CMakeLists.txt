@@ -10,11 +10,11 @@ FetchContent_MakeAvailable(googletest)
 
 link_libraries(rrisc32)
 
-add_executable(test_unit
+add_executable(rrisc32-gtest
     test_assembly.cpp
     test_rrisc32.cpp)
 
-target_link_libraries(test_unit GTest::gtest_main)
+target_link_libraries(rrisc32-gtest GTest::gtest_main)
 
 add_custom_target(check-unit
-    COMMAND test_unit)
+    COMMAND rrisc32-gtest)

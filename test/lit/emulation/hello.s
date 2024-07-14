@@ -1,6 +1,6 @@
-# RUN: assemble -o %t.o %s
-# RUN: link -o %t.exe %t.o
-# RUN: emulate %t.exe | filecheck %s
+# RUN: rrisc32-as -o %t.o %s
+# RUN: rrisc32-link -o %t.exe %t.o
+# RUN: rrisc32-emulate %t.exe | filecheck %s
 
   .text
 

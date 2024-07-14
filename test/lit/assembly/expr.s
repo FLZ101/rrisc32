@@ -1,6 +1,6 @@
-# RUN: assemble -o %t %s
-# RUN: dump --dis .text %t | filecheck %s --check-prefix=TEXT
-# RUN: dump --hex .data %t | filecheck %s --check-prefix=DATA
+# RUN: rrisc32-as -o %t %s
+# RUN: rrisc32-dump --dis .text %t | filecheck %s --check-prefix=TEXT
+# RUN: rrisc32-dump --hex .data %t | filecheck %s --check-prefix=DATA
 
   .text
   addi x1, x2, +(-1 *(3 /(8 2)))

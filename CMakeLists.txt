@@ -9,6 +9,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+file(CHMOD ${CMAKE_CURRENT_SOURCE_DIR}/setup_python.sh
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+add_custom_target(setup_python
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/setup_python.sh
+)
+
 include_directories(include)
 
 add_subdirectory(lib)

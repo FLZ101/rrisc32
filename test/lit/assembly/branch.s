@@ -1,5 +1,5 @@
-# RUN: assemble -o %t %s
-# RUN: dump --dis .text %t | filecheck %s --check-prefix=TEXT
+# RUN: rrisc32-as -o %t %s
+# RUN: rrisc32-dump --dis .text %t | filecheck %s --check-prefix=TEXT
 
   .text
   .rep 3

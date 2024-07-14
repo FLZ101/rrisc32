@@ -1,3 +1,3 @@
-add_executable(emulate
+add_executable(rrisc32-emulate
     main.cpp
 )

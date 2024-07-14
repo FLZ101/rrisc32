@@ -1,3 +1,3 @@
-add_executable(assemble
+add_executable(rrisc32-as
     main.cpp
 )
