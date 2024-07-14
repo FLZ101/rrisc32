@@ -9,10 +9,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-file(CHMOD ${CMAKE_CURRENT_SOURCE_DIR}/setup_python.sh
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/setup_python.sh [=[
+#!/bin/bash
+[[ -e python ]] || python3 -m venv python
+]=])
+file(CHMOD ${CMAKE_CURRENT_BINARY_DIR}/setup_python.sh
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
 add_custom_target(setup_python
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/setup_python.sh
+    COMMAND ./setup_python.sh
 )
 
 include_directories(include)
