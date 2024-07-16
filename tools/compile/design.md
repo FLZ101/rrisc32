@@ -117,6 +117,21 @@
     * a0, a1
   * does not support passing/returning structure
 
+  * stack frame
+
+    ```
+    arg2_hi
+    arg2_lo
+    arg1
+    arg0
+    return address
+    fp                       --- fp
+    ... local variables
+    ...                      --- sp
+    ```
+
+  * The called function is allowed to modify the arguments on the stack and the caller must not assume the stack parameters are preserved. The caller should clean up the stack.
+
 * var arg functions
 
   ```
@@ -132,18 +147,52 @@
 * expression evaluation
 
   * operands
+
     * global, static
+
+    * arguments
+
     * local
+
     * temporary (stack)
+
+      ```
+      operand_2_hi
+      operand_2_lo --- sp
+      ```
+
+      ```
+      operand_2
+      operand_1 --- sp
+      ```
+
   * result
     a0, a1
 
   * examples
 
     ```
-    a + b
+    (a + b) * (c + d)
+      a0 <- c + d
+      push a0
+      a0 <- a + b
+      push a0
+      pop a0
+      pop a1
+      a0 <- a0 + a1
+
+    e1 * e2
+      eval(e2)
+      push a0
+      eval(e1)
+      push a0
 
     f(a, b)
+      push b
+      push a
+      call f
+      pop
+      pop
 
     a + f(b)
 
