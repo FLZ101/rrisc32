@@ -17,7 +17,7 @@ def main():
 
     args = parser.parse_args()
     inFile = args.i
-    outFile = args.o if args.o else (inFile + '.o')
+    outFile = args.o if args.o else (inFile + '.s')
 
     ast = parse_file(inFile, use_cpp=True)
 

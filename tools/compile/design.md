@@ -114,7 +114,7 @@
   * arguments
     * stack (4-aligned)
   * return
-    * stack
+    * a0, a1
   * does not support passing/returning structure
 
 * var arg functions
@@ -135,7 +135,8 @@
     * global, static
     * local
     * temporary (stack)
-  * result (stack)
+  * result
+    a0, a1
 
   * examples
 

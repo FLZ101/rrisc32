@@ -861,8 +861,7 @@ class Compiler(c_ast.NodeVisitor):
         if node.decls is None:  # declaration
             if not self.curScope.findSymbol(node.name):
                 self.curScope.addSymbol(node.name, StructType(None, node.name))
-            else:
-                self.curScope.getStructType(node.name)
+            _setType(node, self.curScope.getStructType(node.name))
             return
 
         fields: list[Field] = []
@@ -871,7 +870,7 @@ class Compiler(c_ast.NodeVisitor):
             if not decl.name:
                 raise SemaError("anonymous field is not supported")
             self.visit(decl)
-            fields.append(Field(_getType(decl), decl.name))
+            fields.append(Field(_getType(decl.type), decl.name))
 
         ty = self.curScope.findSymbol(node.name)
         if isinstance(ty, StructType) and not ty.isComplete():  # declared
@@ -903,15 +902,18 @@ class Compiler(c_ast.NodeVisitor):
         self.visit(node.type)
         ty = _getType(node.type)
 
-        assert node.name
+        # struct Foo { int i; };
+        if not node.name:
+            return
+
         _global = self.curScope is _gScope
         _static = "static" in node.quals
         if _global or _static:
             sec = self._asm._secData if node.init else self._asm._secBss
 
+            sec.addEmptyLine()
             _ = ty.p2align()
             if _ > 0:
-                sec.addEmptyLine()
                 sec.add(f".align {_}")
 
             if _global:
@@ -979,7 +981,7 @@ class Compiler(c_ast.NodeVisitor):
                             field = ty._fields[i]
                             _gen(field._type, init.exprs[i])
                             left = (
-                                (ty._fields[i]._offset if i < n - 1 else ty.size())
+                                (ty._fields[i + 1]._offset if i < n - 1 else ty.size())
                                 - field._offset
                                 - field._type.size()
                             )
