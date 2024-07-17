@@ -208,7 +208,7 @@ class PointerType(Type):
         return "%r*" % self._base
 
 
-class FunctionSignature:
+class FunctionType(Type):
     def __init__(self, ret: Type, args: list[Type], ellipsis: bool) -> None:
 
         def _cook(ty: Type):
@@ -224,18 +224,11 @@ class FunctionSignature:
         self._args = [_cook(_) for _ in args]
         self._ellipsis = ellipsis
 
-    def __repr__(self) -> str:
-        return "(%r => %r)" % (self._args, self._ret)
-
-
-class FunctionType(Type):
-    def __init__(self, sig: FunctionSignature) -> None:
-        self._sig = sig
         self._size = 0
         self._alignment = 4
 
     def __repr__(self) -> str:
-        return "%r" % self._sig
+        return "(%r => %r)" % (self._args, self._ret)
 
 
 # https://en.cppreference.com/w/c/language/value_category
@@ -685,10 +678,18 @@ class Compiler(c_ast.NodeVisitor):
     def setNodeValue(self, node: c_ast.Node, value: Value):
         self.getNodeRecord(node)._value = value
 
-    def getNodeValue(self, node: c_ast.Node) -> Value:
+    def getNodeValue(self, node: c_ast.Node, ty: Type | None = None) -> Value:
         r = self.getNodeRecord(node)
         assert r._value is not None
-        return r._value
+        if ty is None:
+            return r._value
+        return self.convert(ty, r._value)
+
+    def loadNodeValue(self, node: c_ast.Node, ty: Type | None = None):
+        v = self.getNodeValue(node, ty)
+        if isinstance(v, TemporaryValue):
+            return
+        # TODO
 
     def getNodeIntConstant(self, node: c_ast.Node) -> int:
         ic = self.getNodeValue(node)
@@ -827,15 +828,13 @@ class Compiler(c_ast.NodeVisitor):
             return True
 
         if isinstance(t1, FunctionType) and isinstance(t2, FunctionType):
-            sig1 = t1._sig
-            sig2 = t2._sig
-            if sig1._ellipsis != sig2._ellipsis:
+            if t1._ellipsis != t2._ellipsis:
                 return False
-            if len(sig1._args) != len(sig2._args):
+            if len(t1._args) != len(t2._args):
                 return False
-            for i in range(sig1._args):
-                at1 = sig1._args[i]
-                at2 = sig2._args[i]
+            for i in range(t1._args):
+                at1 = t1._args[i]
+                at2 = t2._args[i]
                 if self.isCompatible(at1, at2):
                     continue
 
@@ -1038,7 +1037,7 @@ class Compiler(c_ast.NodeVisitor):
                             raise CCError("invalid initializer")
 
                         self.visit(init)
-                        v = self.convert(ty, self.getNodeValue(init))
+                        v = self.getNodeValue(init, ty)
 
                         if not isinstance(v, Constant):
                             raise CCError("initializer element is not constant")
@@ -1130,7 +1129,8 @@ class Compiler(c_ast.NodeVisitor):
         decl: c_ast.Decl = node.decl
         self.visit(decl)
         funcName = decl.name
-        funcType: FunctionType = self.curScope.getFunction(decl.name).getType()
+        self._func = self.curScope.getFunction(funcName)
+        funcType: FunctionType = self._func.getType()
         funcDecl: c_ast.FuncDecl = decl.type
 
         sec = self._asm._secText
@@ -1150,7 +1150,7 @@ class Compiler(c_ast.NodeVisitor):
 
         # declare arguments
         offset = 0
-        for i, argTy in enumerate(funcType._sig._args):
+        for i, argTy in enumerate(funcType._args):
             if isinstance(funcDecl.args[i], c_ast.Decl):
                 argName = funcDecl.args[i].name
                 offset = align(offset, 4)
@@ -1162,12 +1162,16 @@ class Compiler(c_ast.NodeVisitor):
         self.exitScope()
 
         sec.add(f".size ${funcName}, -($. ${funcName})")
+        self._func = None
 
     # https://en.cppreference.com/w/c/language/function_declaration
     def visit_FuncDecl(self, node: c_ast.FuncDecl):
         self.visit(node.type)
+        ret = self.getNodeType(node.type)
 
+        args: list[Type] = []
         ellipsis = False
+
         if node.args is None:
             node.args = []
         n = len(node.args)
@@ -1177,20 +1181,21 @@ class Compiler(c_ast.NodeVisitor):
                 assert i == n - 1
                 ellipsis = True
                 break
+
             self.visit(arg)
-
             ty = self.getNodeType(arg.type)
-            if isinstance(ty, VoidType) and n != 1:
-                raise CCError("'void' must be the only argument")
 
-        ret = self.getNodeType(node.type)
-        args = [self.getNodeType(arg) for arg in node.args]
-        # ignore the difference between f(void) and f()
-        if len(args) > 0 and isinstance(args[0], VoidType):
-            args = []
+            if isinstance(ty, VoidType):
+                if n != 1:
+                    raise CCError("'void' must be the only argument")
+                # ignore the difference between f(void) and f()
+                break
+
+            args.append(ty)
+
         self.setNodeType(
             node,
-            FunctionType(FunctionSignature(ret, args, ellipsis)),
+            FunctionType(ret, args, ellipsis),
         )
 
     def visit_Typename(self, node: c_ast.Typename):
@@ -1204,8 +1209,8 @@ class Compiler(c_ast.NodeVisitor):
         return False
 
     def visit_Compound(self, node: c_ast.Compound):
-        _func = isinstance(self.parent(), c_ast.FuncDef)
-        if _func:
+        isFuncBody = isinstance(self.parent(), c_ast.FuncDef)
+        if isFuncBody:
             self._asm.emitPrelogue()
         else:
             self.enterScope()
@@ -1214,7 +1219,7 @@ class Compiler(c_ast.NodeVisitor):
         for _ in block_items:
             self.visit(_)
 
-        if _func:
+        if isFuncBody:
             if len(block_items) == 0 or not isinstance(block_items[-1], c_ast.Return):
                 self._asm.emitRet()
         else:
@@ -1288,9 +1293,15 @@ class Compiler(c_ast.NodeVisitor):
         pass
 
     def visit_Return(self, node: c_ast.Return):
+        retTy = self._func._type._ret
         if node.expr:
+            if isinstance(retTy, VoidType):
+                raise CCError("'return' with a value, in function returning void")
             self.visit(node.expr)
-            # TODO
+            v = self.getNodeValue(node.expr, retTy)
+        else:
+            if not isinstance(retTy, VoidType):
+                raise CCError("'return' with no value, in function returning non-void")
         self._asm.emitRet()
 
     def visit_Switch(self, node: c_ast.Switch):
