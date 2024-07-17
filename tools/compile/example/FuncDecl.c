@@ -73,6 +73,16 @@ int f6(int arr[3]) {
     return arr[0] + sizeof(arr); // warning: 'sizeof' on array function parameter 'arr' will return size of 'int *' [-Wsizeof-array-argument]
 }
 
+int f7() {}
+/*
+  FuncDef:
+    Decl: f7, [], [], [], []
+      FuncDecl:
+        TypeDecl: f7, [], None
+          IdentifierType: ['int']
+    Compound:
+*/
+
 int max(a, b)
     int a, b;
 {

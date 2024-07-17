@@ -467,8 +467,12 @@ class Section:
     def addEmptyLine(self):
         self.lines.append("")
 
-    def add(self, s: str, *, indent="    "):
-        self.lines.append(indent + s)
+    def add(self, s: str | list[str], *, indent="    "):
+        if type(s) is list:
+            for _ in s:
+                self.add(_, indent=indent)
+        else:
+            self.lines.append(indent + s)
 
     def addInt(self, ic: IntConstant):
         c = "bhwq"[log2(ic.getType().size())]
@@ -525,6 +529,31 @@ class Asm:
             self._secRodata.add(f".asciz {sLit._sOrig}")
             self._strPool[s] = label
         sLit._label = self._strPool[s]
+
+    def emit(self, s: str | list[str]):
+        self._secText.add(s)
+
+    def push(self, reg: str):
+        self.emit(["addi sp, sp, -4", f"sw sp, {reg}, 0"])
+
+    def pop(self, reg: str | None = None):
+        if reg:
+            self.emit(f"lw {reg}, sp, 0")
+        self.emit("addi sp, sp, 4")
+
+    def emitPrelogue(self):
+        self.push("ra")
+        self.push("fp")
+        self.emit("mv fp, sp")
+
+    def emitEpilogue(self):
+        self.emit("mv sp, fp")
+        self.pop("fp")
+        self.pop("ra")
+
+    def emitRet(self):
+        self.emitEpilogue()
+        self.emit("ret")
 
     def save(self, o: io.StringIO):
         self._secText.save(o)
@@ -696,10 +725,10 @@ class Compiler(c_ast.NodeVisitor):
             sys.exit(1)
 
     def enterScope(self):
-        self.scopes.append(LocalScope(self.curScope))
+        self._scopes.append(LocalScope(self.curScope))
 
     def exitScope(self):
-        self.scopes.pop()
+        self._scopes.pop()
 
     @property
     def curScope(self):
@@ -1098,16 +1127,30 @@ class Compiler(c_ast.NodeVisitor):
         if node.param_decls is not None:
             raise CCNotImplemented("old-style (K&R) function definition")
 
-        self.visit(node.decl)
-        assert isinstance(node.decl, c_ast.Decl)
-        funcType: FunctionType = self.curScope.getFunction(node.decl.name)
-        funcDecl: c_ast.FuncDecl = node.decl.type
+        decl: c_ast.Decl = node.decl
+        self.visit(decl)
+        funcName = decl.name
+        funcType: FunctionType = self.curScope.getFunction(decl.name).getType()
+        funcDecl: c_ast.FuncDecl = decl.type
+
+        sec = self._asm._secText
+        sec.addEmptyLine()
+
+        if "static" in decl.quals:
+            sec.add(f".local ${funcName}")
+        else:
+            sec.add(f".global ${funcName}")
+
+        sec.add(f'.type ${funcName}, "function"')
+
+        sec.add(".align 2")
+        sec.addLabel(funcName)
 
         self.enterScope()
 
         # declare arguments
         offset = 0
-        for i, argTy in range(enumerate(funcType._sig._args)):
+        for i, argTy in enumerate(funcType._sig._args):
             if isinstance(funcDecl.args[i], c_ast.Decl):
                 argName = funcDecl.args[i].name
                 offset = align(offset, 4)
@@ -1118,11 +1161,15 @@ class Compiler(c_ast.NodeVisitor):
 
         self.exitScope()
 
+        sec.add(f".size ${funcName}, -($. ${funcName})")
+
     # https://en.cppreference.com/w/c/language/function_declaration
     def visit_FuncDecl(self, node: c_ast.FuncDecl):
         self.visit(node.type)
 
         ellipsis = False
+        if node.args is None:
+            node.args = []
         n = len(node.args)
         for i, arg in enumerate(node.args):
             arg: c_ast.Decl | c_ast.Typename
@@ -1139,7 +1186,7 @@ class Compiler(c_ast.NodeVisitor):
         ret = self.getNodeType(node.type)
         args = [self.getNodeType(arg) for arg in node.args]
         # ignore the difference between f(void) and f()
-        if isinstance(args[0], VoidType):
+        if len(args) > 0 and isinstance(args[0], VoidType):
             args = []
         self.setNodeType(
             node,
@@ -1157,7 +1204,21 @@ class Compiler(c_ast.NodeVisitor):
         return False
 
     def visit_Compound(self, node: c_ast.Compound):
-        pass
+        _func = isinstance(self.parent(), c_ast.FuncDef)
+        if _func:
+            self._asm.emitPrelogue()
+        else:
+            self.enterScope()
+
+        block_items = node.block_items or []
+        for _ in block_items:
+            self.visit(_)
+
+        if _func:
+            if len(block_items) == 0 or not isinstance(block_items[-1], c_ast.Return):
+                self._asm.emitRet()
+        else:
+            self.exitScope()
 
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
         self.visit(node.expr)
@@ -1227,7 +1288,10 @@ class Compiler(c_ast.NodeVisitor):
         pass
 
     def visit_Return(self, node: c_ast.Return):
-        pass
+        if node.expr:
+            self.visit(node.expr)
+            # TODO
+        self._asm.emitRet()
 
     def visit_Switch(self, node: c_ast.Switch):
         pass
