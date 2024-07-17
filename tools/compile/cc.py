@@ -210,8 +210,18 @@ class PointerType(Type):
 
 class FunctionSignature:
     def __init__(self, ret: Type, args: list[Type], ellipsis: bool) -> None:
-        self._ret = ret
-        self._args = args
+
+        def _cook(ty: Type):
+            if isinstance(ty, ArrayType):
+                return PointerType(_cook(ty._base))
+            if isinstance(ty, StructType):
+                raise CCNotImplemented("pass/return struct")
+            if isinstance(ty, FunctionType):
+                return PointerType(ty)
+            return ty
+
+        self._ret = _cook(ret)
+        self._args = [_cook(_) for _ in args]
         self._ellipsis = ellipsis
 
     def __repr__(self) -> str:
@@ -221,7 +231,7 @@ class FunctionSignature:
 class FunctionType(Type):
     def __init__(self, sig: FunctionSignature) -> None:
         self._sig = sig
-        self._size = 4
+        self._size = 0
         self._alignment = 4
 
     def __repr__(self) -> str:
@@ -290,8 +300,9 @@ class LocalVariable(Variable):
 
 
 class Argument(Variable):
-    def __init__(self, name: str, ty: Type) -> None:
+    def __init__(self, name: str, ty: Type, offset: int) -> None:
         super().__init__(name, ty)
+        self._offset = offset
 
 
 class StrLiteral(LValue):
@@ -662,9 +673,12 @@ class Compiler(c_ast.NodeVisitor):
             raise CCError("not a string literal")
         return sLit
 
-    def parent(self):
-        assert len(self._path) >= 2
-        return self._path[-2]
+    def parent(self, i=1):
+        n = len(self._path)
+        assert n >= 2
+        if i >= n:
+            return None
+        return self._path[-(i + 1)]
 
     def getType(self, name: str) -> Type:
         return self._gScope.getType(name)
@@ -751,12 +765,12 @@ class Compiler(c_ast.NodeVisitor):
     def visit_Enum(self, _: c_ast.Enum):
         raise CCNotImplemented("enum")
 
+    # https://gcc.gnu.org/onlinedocs/gcc/Designated-Inits.html
     def visit_NamedInitializer(self, _: c_ast.NamedInitializer):
-        # https://gcc.gnu.org/onlinedocs/gcc/Designated-Inits.html
         raise CCNotImplemented("designated initializer")
 
+    # https://gcc.gnu.org/onlinedocs/gcc/Compound-Literals.html
     def visit_CompoundLiteral(self, _: c_ast.CompoundLiteral):
-        # https://gcc.gnu.org/onlinedocs/gcc/Compound-Literals.html
         raise CCNotImplemented("compound literal")
 
     # https://en.cppreference.com/w/c/language/type#Compatible_types
@@ -906,6 +920,11 @@ class Compiler(c_ast.NodeVisitor):
 
         _global = self.curScope is self._gScope
         _static = "static" in node.quals
+
+        if isinstance(ty, FunctionType):
+            self.curScope.addSymbol(node.name, Function(node.name, ty))
+            return
+
         if _global or _static:
             sec = self._asm._secData if node.init else self._asm._secBss
 
@@ -1075,11 +1094,60 @@ class Compiler(c_ast.NodeVisitor):
         else:
             self.setNodeValue(node, _)
 
-    def visit_FuncDecl(self, node: c_ast.FuncDecl):
-        pass
-
     def visit_FuncDef(self, node: c_ast.FuncDef):
-        pass
+        if node.param_decls is not None:
+            raise CCNotImplemented("old-style (K&R) function definition")
+
+        self.visit(node.decl)
+        assert isinstance(node.decl, c_ast.Decl)
+        funcType: FunctionType = self.curScope.getFunction(node.decl.name)
+        funcDecl: c_ast.FuncDecl = node.decl.type
+
+        self.enterScope()
+
+        # declare arguments
+        offset = 0
+        for i, argTy in range(enumerate(funcType._sig._args)):
+            if isinstance(funcDecl.args[i], c_ast.Decl):
+                argName = funcDecl.args[i].name
+                offset = align(offset, 4)
+                self.curScope.addSymbol(argName, Argument(argName, argTy, offset))
+                offset += argTy.size()
+
+        self.visit(node.body)
+
+        self.exitScope()
+
+    # https://en.cppreference.com/w/c/language/function_declaration
+    def visit_FuncDecl(self, node: c_ast.FuncDecl):
+        self.visit(node.type)
+
+        ellipsis = False
+        n = len(node.args)
+        for i, arg in enumerate(node.args):
+            arg: c_ast.Decl | c_ast.Typename
+            if isinstance(arg, c_ast.EllipsisParam):
+                assert i == n - 1
+                ellipsis = True
+                break
+            self.visit(arg)
+
+            ty = self.getNodeType(arg.type)
+            if isinstance(ty, VoidType) and n != 1:
+                raise CCError("'void' must be the only argument")
+
+        ret = self.getNodeType(node.type)
+        args = [self.getNodeType(arg) for arg in node.args]
+        # ignore the difference between f(void) and f()
+        if isinstance(args[0], VoidType):
+            args = []
+        self.setNodeType(
+            node,
+            FunctionType(FunctionSignature(ret, args, ellipsis)),
+        )
+
+    def visit_Typename(self, node: c_ast.Typename):
+        self.visit(node.type)
 
     @property
     def _skipCodegen(self) -> bool:
@@ -1087,6 +1155,9 @@ class Compiler(c_ast.NodeVisitor):
             if isinstance(node, c_ast.UnaryOp) and node.op == "sizeof":
                 return True
         return False
+
+    def visit_Compound(self, node: c_ast.Compound):
+        pass
 
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
         self.visit(node.expr)
@@ -1140,9 +1211,6 @@ class Compiler(c_ast.NodeVisitor):
     def visit_Case(self, node: c_ast.Case):
         pass
 
-    def visit_Compound(self, node: c_ast.Compound):
-        pass
-
     def visit_Continue(self, node: c_ast.Continue):
         pass
 
@@ -1172,6 +1240,3 @@ class Compiler(c_ast.NodeVisitor):
 
     def visit_StaticAssert(self, _: c_ast.StaticAssert):
         raise CCNotImplemented("static assertion")
-
-    def visit_Typename(self, _: c_ast.Typename):
-        unreachable()
