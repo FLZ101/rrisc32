@@ -1059,6 +1059,7 @@ void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
     format.push_back(expr.type == Expr::Reg ? 'r' : 'i');
 
   Expr x0 = Expr("x0", Expr::Reg);
+  Expr sp = Expr("sp", Expr::Reg);
   if (name == "li" && format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
@@ -1092,6 +1093,18 @@ void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
     const Expr &e1 = stmt->arguments[1];
     if (e0.s != e1.s)
       addInstr("addi", {e0, e1, Expr(0)});
+  } else if (name == "push" && format == "r") {
+    const Expr &e0 = stmt->arguments[0];
+    addInstr("addi", {sp, sp, Expr(-4)});
+    addInstr("sw", {sp, e0, Expr(0)});
+  } else if (name == "pop") {
+    if (isOneOf(format, {"r", ""})) {
+      if (format == "r") {
+        const Expr &e0 = stmt->arguments[0];
+        addInstr("lw", {e0, sp, Expr(0)});
+      }
+      addInstr("addi", {sp, sp, Expr(4)});
+    }
   } else if (name == "not" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
