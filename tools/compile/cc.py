@@ -346,8 +346,8 @@ class Variable(LValue):
     def push(self, asm: "Asm"):
         self.load(asm, "t0", "t1")
         if self._type.size() == 8:
-            asm.push("t1")
-        asm.push("t0")
+            asm.emit("push t1")
+        asm.emit("push t0")
 
 
 class GlobalVariable(Variable):
@@ -457,8 +457,8 @@ class Constant(RValue):
     def push(self, asm: "Asm"):
         self.load(asm, "t0", "t1")
         if self._type.size() == 8:
-            asm.push("t1")
-        asm.push("t0")
+            asm.emit("push t1")
+        asm.emit("push t0")
 
 
 class IntConstant(Constant):
@@ -507,8 +507,8 @@ class TemporaryValue(RValue):
         sz = self._type.size()
         assert sz in [1, 2, 4, 8]
         if sz == 8:
-            asm.push("a1")
-        asm.push("a0")
+            asm.emit("push a1")
+        asm.emit("push a0")
 
 
 class Scope(ABC):
@@ -565,10 +565,8 @@ class GlobalScope(Scope):
 
 
 class LocalScope(Scope):
-    def __init__(self, offset: int = 0) -> None:
-        super().__init__()
-
-        self._offset = offset
+    def __init__(self, prev: Scope) -> None:
+        super().__init__(prev)
 
 
 class Section:
@@ -648,23 +646,11 @@ class Asm:
     def emit(self, s: str | list[str]):
         self._secText.add(s)
 
-    def push(self, reg: str):
-        self.emit(["addi sp, sp, -4", f"sw sp, {reg}, 0"])
-
-    def pop(self, reg: str | None = None):
-        if reg:
-            self.emit(f"lw {reg}, sp, 0")
-        self.emit("addi sp, sp, 4")
-
     def emitPrelogue(self):
-        self.push("ra")
-        self.push("fp")
-        self.emit("mv fp, sp")
+        self.emit(["push ra", "push fp", "mv fp, sp"])
 
     def emitEpilogue(self):
-        self.emit("mv sp, fp")
-        self.pop("fp")
-        self.pop("ra")
+        self.emit(["mv sp, fp", "pop fp", "pop ra"])
 
     def emitRet(self):
         self.emitEpilogue()
@@ -808,7 +794,11 @@ class Compiler(c_ast.NodeVisitor):
         return self.convert(ty, r._value)
 
     def loadNodeValue(
-        self, node: c_ast.Node, r1: str = "a0", r2: str = "a1", ty: Type | None = None
+        self,
+        node: c_ast.Node,
+        ty: Type | None = None,
+        r1: str = "a0",
+        r2: str = "a1",
     ):
         v = self.getNodeValue(node, ty)
         match v:
@@ -1086,7 +1076,7 @@ class Compiler(c_ast.NodeVisitor):
         _global = self.curScope is self._gScope
         _static = "static" in node.quals
 
-        if _global or _static:
+        if _global or _static:  # global/static variables
             sec = self._asm._secData if node.init else self._asm._secBss
 
             sec.addEmptyLine()
@@ -1196,6 +1186,12 @@ class Compiler(c_ast.NodeVisitor):
 
             return
 
+        if isinstance(self.parent(), c_ast.ParamList):  # arguments
+            return
+
+        # local variables
+        # TODO
+
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
         assert isinstance(s, str)
@@ -1259,8 +1255,11 @@ class Compiler(c_ast.NodeVisitor):
         if node.param_decls is not None:
             raise CCNotImplemented("old-style (K&R) function definition")
 
+        self.enterScope()
+
         decl: c_ast.Decl = node.decl
         self.visit(decl)
+
         funcName = decl.name
         self._func = self.curScope.getFunction(funcName)
         funcType: FunctionType = self._func.getType()
@@ -1279,10 +1278,8 @@ class Compiler(c_ast.NodeVisitor):
         sec.add(".align 2")
         sec.addLabel(funcName)
 
-        self.enterScope()
-
         # declare arguments
-        offset = 0
+        offset = 8
         for i, argTy in enumerate(funcType._args):
             if isinstance(funcDecl.args[i], c_ast.Decl):
                 argName = funcDecl.args[i].name
@@ -1292,10 +1289,10 @@ class Compiler(c_ast.NodeVisitor):
 
         self.visit(node.body)
 
-        self.exitScope()
-
         sec.add(f".size ${funcName}, -($. ${funcName})")
         self._func = None
+
+        self.exitScope()
 
     # https://en.cppreference.com/w/c/language/function_declaration
     def visit_FuncDecl(self, node: c_ast.FuncDecl):
@@ -1307,6 +1304,9 @@ class Compiler(c_ast.NodeVisitor):
 
         if node.args is None:
             node.args = []
+        else:
+            node.args = node.args.params
+
         n = len(node.args)
         for i, arg in enumerate(node.args):
             arg: c_ast.Decl | c_ast.Typename
