@@ -30,6 +30,25 @@ def log2(i: int):
     return arr.index(i)
 
 
+def checkImm(i: int, n: int):
+    mins = (1 << (n - 1)) - (1 << n)
+    maxs = (1 << (n - 1)) - 1
+    return mins <= i <= maxs
+
+
+def checkImmI(i: int):
+    return checkImm(i, 12)
+
+
+def checkImmS(i: int):
+    return checkImm(i, 12)
+
+
+def checkImmB(i: int):
+    assert i & 1 == 0
+    return checkImm(i, 13)
+
+
 # https://en.cppreference.com/w/c/language/type
 class Type(ABC):
     def name(self) -> str:
@@ -269,10 +288,72 @@ class Variable(LValue):
     def __repr__(self) -> str:
         return "(%s, %r)" % (self._name, self._type)
 
+    def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        _label = getattr(self, "_label", None)
+        _offset = getattr(self, "_offset", None)
+
+        ty = self._type
+        sz = ty.size()
+        if _label is not None:
+            match sz:
+                case 8:
+                    asm.emit(f"lw {r1}, ${_label}")
+                    asm.emit(f"lw {r2}, +(${_label} 4)")
+                case 4:
+                    asm.emit(f"lw {r1}, ${_label}")
+                case 2:
+                    assert isinstance(ty, IntType)
+                    mnemonic = "lhu" if ty._unsigned else "lh"
+                    asm.emit(f"{mnemonic} {r1}, ${_label}")
+                case 1:
+                    assert isinstance(ty, IntType)
+                    mnemonic = "lbu" if ty._unsigned else "lb"
+                    asm.emit(f"{mnemonic} {r1}, ${_label}")
+                case _:
+                    unreachable()
+        else:
+            assert _offset is not None
+
+            def _load(mnemonic: str, r: str, i: int):
+                if checkImmI(i):
+                    asm.emit(f"{mnemonic} {r}, fp, {i}")
+                else:
+                    asm.emit(
+                        [
+                            f"lui t0, %hi({i})",
+                            f"add t0, t0, fp",
+                            f"{mnemonic} {r}, t0, %lo({i})",
+                        ]
+                    )
+
+            match sz:
+                case 8:
+                    _load("lw", r1, _offset)
+                    _load("lw", r2, _offset + 4)
+                case 4:
+                    _load("lw", r1, _offset)
+                case 2:
+                    assert isinstance(ty, IntType)
+                    mnemonic = "lhu" if ty._unsigned else "lh"
+                    _load(mnemonic, r1, _offset)
+                case 1:
+                    assert isinstance(ty, IntType)
+                    mnemonic = "lbu" if ty._unsigned else "lb"
+                    _load(mnemonic, r1, _offset)
+                case _:
+                    unreachable()
+
+    def push(self, asm: "Asm"):
+        self.load(asm, "t0", "t1")
+        if self._type.size() == 8:
+            asm.push("t1")
+        asm.push("t0")
+
 
 class GlobalVariable(Variable):
     def __init__(self, name: str, ty: Type, _static=False) -> None:
         super().__init__(name, ty)
+        self._label = name
         self._static = _static
 
 
@@ -285,11 +366,13 @@ class StaticVariable(Variable):
 class ExternVariable(Variable):
     def __init__(self, name: str, ty: Type) -> None:
         super().__init__(name, ty)
+        self._label = name
 
 
 class LocalVariable(Variable):
-    def __init__(self, name: str, ty: Type) -> None:
+    def __init__(self, name: str, ty: Type, offset: int) -> None:
         super().__init__(name, ty)
+        self._offset = offset
 
 
 class Argument(Variable):
@@ -358,12 +441,29 @@ class CastExpr(RValue):
 
 # https://en.cppreference.com/w/c/language/constant_expression
 class Constant(RValue):
-    pass
+
+    def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        sz = self._type.size()
+        assert sz in [1, 2, 4, 8]
+        i = getattr(self, "_i", None)
+        if i is not None:
+            if sz == 8:
+                asm.emit([f"li {r2}, {i >> 32}", f"li {r1}, { i & 0xffffffff}"])
+            else:
+                asm.emit(f"li {r1}, {i}")
+        else:
+            raise NotImplementedError()
+
+    def push(self, asm: "Asm"):
+        self.load(asm, "t0", "t1")
+        if self._type.size() == 8:
+            asm.push("t1")
+        asm.push("t0")
 
 
 class IntConstant(Constant):
     def __init__(self, i: int, ty: IntType) -> None:
-        self._i = i
+        self._i = ty.convert(i)
         self._type = ty
 
 
@@ -383,10 +483,32 @@ class SymConstant(Constant):
         if offset:
             assert ty.isComplete()
 
+    def load(self, asm: "Asm", r1: str = "a0", _: str = "a1"):
+        if self._offset:
+            asm.emit(f"li {r1}, +(${self._name} {self._offset})")
+        else:
+            asm.emit(f"li {r1}, ${self._name}")
+
 
 class TemporaryValue(RValue):
     def __init__(self, ty: Type) -> None:
         self._type = ty
+
+    def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        sz = self._type.size()
+        assert sz in [1, 2, 4, 8]
+        if sz == 8:
+            if r2 != "a1":
+                asm.emit(f"mv {r2}, a1")
+        if r1 != "a0":
+            asm.emit(f"mv {r1}, a0")
+
+    def push(self, asm: "Asm"):
+        sz = self._type.size()
+        assert sz in [1, 2, 4, 8]
+        if sz == 8:
+            asm.push("a1")
+        asm.push("a0")
 
 
 class Scope(ABC):
@@ -685,11 +807,15 @@ class Compiler(c_ast.NodeVisitor):
             return r._value
         return self.convert(ty, r._value)
 
-    def loadNodeValue(self, node: c_ast.Node, ty: Type | None = None):
+    def loadNodeValue(
+        self, node: c_ast.Node, r1: str = "a0", r2: str = "a1", ty: Type | None = None
+    ):
         v = self.getNodeValue(node, ty)
-        if isinstance(v, TemporaryValue):
-            return
-        # TODO
+        match v:
+            case Constant() | Variable() | TemporaryValue():
+                v.load(self._asm, r1, r2)
+            case _:
+                unreachable()
 
     def getNodeIntConstant(self, node: c_ast.Node) -> int:
         ic = self.getNodeValue(node)
@@ -935,6 +1061,9 @@ class Compiler(c_ast.NodeVisitor):
             raise CCError(f"can not convert {res.getType()} to {t1}")
         return res
 
+    def cast(self, t1: Type, v: Value):
+        pass
+
     def visit_Decl(self, node: c_ast.Decl):
         if node.bitsize:
             raise CCNotImplemented("bitfield")
@@ -946,12 +1075,16 @@ class Compiler(c_ast.NodeVisitor):
         if not node.name:
             return
 
-        _global = self.curScope is self._gScope
-        _static = "static" in node.quals
-
         if isinstance(ty, FunctionType):
             self.curScope.addSymbol(node.name, Function(node.name, ty))
             return
+
+        if "extern" in node.quals:
+            self.curScope.addSymbol(node.name, ExternVariable(node.name, ty))
+            return
+
+        _global = self.curScope is self._gScope
+        _static = "static" in node.quals
 
         if _global or _static:
             sec = self._asm._secData if node.init else self._asm._secBss
@@ -1298,7 +1431,7 @@ class Compiler(c_ast.NodeVisitor):
             if isinstance(retTy, VoidType):
                 raise CCError("'return' with a value, in function returning void")
             self.visit(node.expr)
-            v = self.getNodeValue(node.expr, retTy)
+            self.loadNodeValue(node.expr, retTy)
         else:
             if not isinstance(retTy, VoidType):
                 raise CCError("'return' with no value, in function returning non-void")

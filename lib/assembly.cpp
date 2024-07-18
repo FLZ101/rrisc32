@@ -1072,13 +1072,13 @@ void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
     }
     addInstr("lui", {e0, Expr("hi", {e1})});
     addInstr("addi", {e0, e0, Expr("lo", {e1})});
-  } else if (isOneOf(name, {"lb", "lh", "lw", "lbu", "lhu", "lwu"}) &&
+  } else if (isOneOf(name, {"lb", "lh", "lw", "lbu", "lhu"}) &&
              format == "ri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
     addInstr("lui", {e0, Expr("hi", {e1})});
     addInstr(name, {e0, e0, Expr("lo", {e1})});
-  } else if (isOneOf(name, {"sb", "sh", "sw", "sbu", "shu", "swu"}) &&
+  } else if (isOneOf(name, {"sb", "sh", "sw", "sbu", "shu"}) &&
              format == "rri") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
@@ -1090,7 +1090,8 @@ void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
   } else if (name == "mv" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
-    addInstr("addi", {e0, e1, Expr(0)});
+    if (e0.s != e1.s)
+      addInstr("addi", {e0, e1, Expr(0)});
   } else if (name == "not" && format == "rr") {
     const Expr &e0 = stmt->arguments[0];
     const Expr &e1 = stmt->arguments[1];
