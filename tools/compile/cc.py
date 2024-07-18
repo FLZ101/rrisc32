@@ -137,7 +137,7 @@ class ArrayType(Type):
         self._size = self._base.size() * self._dim
 
     def __repr__(self) -> str:
-        return "%r[%d]" % (self._base, self._dim)
+        return "%r[%s]" % (self._base, self._dim)
 
 
 class Field:
@@ -567,6 +567,10 @@ class GlobalScope(Scope):
 class LocalScope(Scope):
     def __init__(self, prev: Scope) -> None:
         super().__init__(prev)
+
+        self._offset: int = 0
+        if isinstance(prev, LocalScope):
+            self._offset = prev._offset
 
 
 class Section:
@@ -1060,6 +1064,8 @@ class Compiler(c_ast.NodeVisitor):
 
         self.visit(node.type)
         ty = self.getNodeType(node.type)
+        if ty is self.getType("void"):
+            ty.checkComplete()  # trigger an exception
 
         # struct Foo { int i; };
         if not node.name:
@@ -1186,11 +1192,15 @@ class Compiler(c_ast.NodeVisitor):
 
             return
 
-        if isinstance(self.parent(), c_ast.ParamList):  # arguments
+        if isinstance(self.parent(), c_ast.FuncDecl):  # arguments
             return
 
         # local variables
-        # TODO
+        scope: LocalScope = self.curScope
+        scope._offset += align(ty.size(), 4)
+        scope.addSymbol(node.name, LocalVariable(node.name, ty, scope._offset))
+        if node.init:
+            pass  # TODO
 
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
