@@ -591,6 +591,16 @@ class Section:
         else:
             self.lines.append(indent + s)
 
+    def addRaw(self, s: str, *, indent="    "):
+        for line in s.splitlines():
+            line = line.strip()
+            if line == "":
+                continue
+            if line.endswith(":"):
+                self.lines.append(line)
+            else:
+                self.add(line, indent=indent)
+
     def addInt(self, ic: IntConstant):
         c = "bhwq"[log2(ic.getType().size())]
         self.add(f".d{c} {ic._i}")
@@ -603,6 +613,17 @@ class Section:
             self.add(f".dw ${sc._name}")
         else:
             self.add(f".dw +(${sc._name} {sc._offset})")
+
+    def addConstant(self, c: Constant):
+        match c:
+            case IntConstant():
+                self.addInt(c)
+            case PtrConstant():
+                self.addPtr(c)
+            case SymConstant():
+                self.addSym(c)
+            case _:
+                unreachable()
 
     def addLabel(self, s: str):
         self.add(s + ":", indent="")
@@ -724,6 +745,7 @@ class Compiler(c_ast.NodeVisitor):
         self._func: Function = None
 
         self._asm = Asm()
+        self._builtins: dict[str, int] = {"memset": 0}
 
         def _addType(ty: Type, names: list[str] | None = None):
             if names is None:
@@ -832,6 +854,10 @@ class Compiler(c_ast.NodeVisitor):
 
     def getType(self, name: str) -> Type:
         return self._gScope.getType(name)
+
+    def getIC(self, i: int, ty: str = None):
+        ty = ty or "int"
+        return IntConstant(i, self.getType(ty))
 
     def visit(self, node: c_ast.Node):
         try:
@@ -1013,9 +1039,7 @@ class Compiler(c_ast.NodeVisitor):
             if isinstance(v, StrLiteral):
                 assert v._label
                 return SymConstant(v._label, PointerType(v._type._base))
-            return AddressOfExpr(
-                ArraySubscriptExpr(v, IntConstant(0, self.getType("size_t")))
-            )
+            return AddressOfExpr(ArraySubscriptExpr(v, self.getIC(0, "size_t")))
 
         # function to pointer conversion
         if (
@@ -1079,8 +1103,117 @@ class Compiler(c_ast.NodeVisitor):
             self.curScope.addSymbol(node.name, ExternVariable(node.name, ty))
             return
 
+        if isinstance(self.parent(), c_ast.Struct):  # fields
+            return
+
+        if isinstance(self.parent(), c_ast.FuncDecl):  # arguments
+            return
+
         _global = self.curScope is self._gScope
         _static = "static" in node.quals
+        _local = not _global and not _static
+
+        _path = []
+
+        def _genRef():
+            res = c_ast.ID(node.name)
+            for x in _path:
+                match x:
+                    case int():
+                        res = c_ast.ArrayRef(res, c_ast.Constant("int", f"{x}"))
+                    case str():
+                        res = c_ast.StructRef(res, ".", c_ast.ID(x))
+                    case _:
+                        unreachable()
+            return res
+
+        def _gen(ty: Type, init: c_ast.Node):
+            if isinstance(ty, ArrayType):
+                if ty._base in [
+                    self.getType("char"),
+                    self.getType("unsigned char"),
+                ]:
+                    if not isinstance(init, c_ast.InitList):  # char s[] = "hello"
+                        self.visit(init)
+                        sLit = self.getNodeStrLiteral(init)
+
+                        if not _local:
+                            sec.add(f".asciz {sLit._sOrig}")
+                        else:
+                            for i, c in enumerate(sLit._s):
+                                _path.append(i)
+                                _gen(ty._base, c_ast.Constant("int", f"{ord(c)}"))
+                                _path.pop()
+
+                        n = len(sLit._s)
+                        if not ty.isComplete():
+                            ty.setDim(n)
+                        if n > ty._dim:
+                            raise CCError("initializer-string is too long")
+
+                        if not _local:
+                            left = ty.size() - n
+                            if left > 0:
+                                sec.add(f".fill {left}")
+                        return
+
+                if not isinstance(init, c_ast.InitList):
+                    raise CCError("invalid initializer")
+
+                n = len(init.exprs)
+                if not ty.isComplete():
+                    ty.setDim(n)
+                ty.checkComplete()
+
+                if n > ty._dim:
+                    raise CCError("too many elements in array initializer")
+
+                for i in range(n):
+                    _gen(ty._base, init.exprs[i])
+
+                left = ty.size() - n * ty._base.size()
+                if left > 0:
+                    sec.add(f".fill {left}")
+
+            elif isinstance(ty, StructType):
+                if not isinstance(init, c_ast.InitList):
+                    raise CCError("invalid initializer")
+                ty.checkComplete()
+
+                n = len(init.exprs)
+                if n > len(ty._fields):
+                    raise CCError("too many elements in struct initializer")
+
+                for i in range(n):
+                    field = ty._fields[i]
+
+                    if not _local:
+                        _gen(field._type, init.exprs[i])
+                        left = (
+                            (ty._fields[i + 1]._offset if i < n - 1 else ty.size())
+                            - field._offset
+                            - field._type.size()
+                        )
+                        if left > 0:
+                            sec.add(f".fill {left}")
+                    else:
+                        _path.append(field._name)
+                        _gen(field._type, init.exprs[i])
+                        _path.pop()
+
+            else:
+                if isinstance(init, c_ast.InitList):
+                    raise CCError("invalid initializer")
+
+                self.visit(init)
+                v = self.getNodeValue(init, ty)
+
+                if not _local:
+                    if not isinstance(v, Constant):
+                        raise CCError("initializer element is not constant")
+                    sec.addConstant(v)
+                else:
+                    self.visit(c_ast.Assignment("=", _genRef(), v))
 
         if _global or _static:  # global/static variables
             sec = self._asm._secData if node.init else self._asm._secBss
@@ -1103,83 +1236,6 @@ class Compiler(c_ast.NodeVisitor):
                 ty.checkComplete()
                 sec.add(f".fill {ty.size()}")
             else:
-
-                def _gen(ty: Type, init: c_ast.Node):
-                    if isinstance(ty, ArrayType):
-                        if ty._base in [
-                            self.getType("char"),
-                            self.getType("unsigned char"),
-                        ]:
-                            if not isinstance(init, c_ast.InitList):
-                                self.visit(init)
-                                sLit = self.getNodeStrLiteral(init)
-                                sec.add(f".asciz {sLit._sOrig}")
-                                n = len(sLit._s)
-                                if not ty.isComplete():
-                                    ty.setDim(n)
-                                if n > ty._dim:
-                                    raise CCError("initializer-string is too long")
-                                left = ty.size() - n
-                                if left > 0:
-                                    sec.add(f".fill {left}")
-                                return
-
-                        if not isinstance(init, c_ast.InitList):
-                            raise CCError("invalid initializer")
-
-                        n = len(init.exprs)
-                        if not ty.isComplete():
-                            ty.setDim(n)
-                        ty.checkComplete()
-
-                        if n > ty._dim:
-                            raise CCError("too many elements in array initializer")
-
-                        for i in range(n):
-                            _gen(ty._base, init.exprs[i])
-
-                        left = ty.size() - n * ty._base.size()
-                        if left > 0:
-                            sec.add(f".fill {left}")
-
-                    elif isinstance(ty, StructType):
-                        if not isinstance(init, c_ast.InitList):
-                            raise CCError("invalid initializer")
-                        ty.checkComplete()
-
-                        n = len(init.exprs)
-                        if n > len(ty._fields):
-                            raise CCError("too many elements in struct initializer")
-
-                        for i in range(n):
-                            field = ty._fields[i]
-                            _gen(field._type, init.exprs[i])
-                            left = (
-                                (ty._fields[i + 1]._offset if i < n - 1 else ty.size())
-                                - field._offset
-                                - field._type.size()
-                            )
-                            if left > 0:
-                                sec.add(f".fill {left}")
-                    else:
-                        if isinstance(init, c_ast.InitList):
-                            raise CCError("invalid initializer")
-
-                        self.visit(init)
-                        v = self.getNodeValue(init, ty)
-
-                        if not isinstance(v, Constant):
-                            raise CCError("initializer element is not constant")
-
-                        if isinstance(v, IntConstant):
-                            sec.addInt(v)
-                        elif isinstance(v, SymConstant):
-                            sec.addSym(v)
-                        elif isinstance(v, PtrConstant):
-                            sec.addPtr(v)
-                        else:
-                            unreachable()
-
                 _gen(ty, node.init)
 
             if _static:
@@ -1188,19 +1244,21 @@ class Compiler(c_ast.NodeVisitor):
                 sec.add(f".global ${label}")
 
             sec.add(f'.type ${label}, "object"')
-            sec.add(f".size ${label}, {ty.size()}")
+            sec.add(f".size ${label}, -($. ${label})")
 
-            return
-
-        if isinstance(self.parent(), c_ast.FuncDecl):  # arguments
-            return
-
-        # local variables
-        scope: LocalScope = self.curScope
-        scope._offset += align(ty.size(), 4)
-        scope.addSymbol(node.name, LocalVariable(node.name, ty, scope._offset))
-        if node.init:
-            pass  # TODO
+        else:  # local variables
+            scope: LocalScope = self.curScope
+            scope._offset += align(ty.size(), 4)
+            scope.addSymbol(node.name, LocalVariable(node.name, ty, scope._offset))
+            if node.init:
+                self.emitBuiltinCall(
+                    "memset",
+                    c_ast.UnaryOp("&", c_ast.ID(node.name)),  # s
+                    self.getIC(0),  # c
+                    self.getIC(ty.size(), "size_t"),  # n
+                )
+                # translate the initialization into assignments
+                _gen(ty, node.init)
 
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
@@ -1212,7 +1270,7 @@ class Compiler(c_ast.NodeVisitor):
                 assert s.startswith("'") and s.endswith("'")
                 s = unescapeStr(s[1:-1])
                 assert len(s) == 1
-                self.setNodeValue(node, IntConstant(ord(s[0]), self.getType("char")))
+                self.setNodeValue(node, self.getIC(ord(s[0]), "char"))
                 return
 
             if node.type == "string":
@@ -1376,7 +1434,7 @@ class Compiler(c_ast.NodeVisitor):
                 ty.checkComplete()
                 self.setNodeValue(
                     node,
-                    IntConstant(ty.size(), self.getType("size_t")),
+                    self.getIC(ty.size(), "size_t"),
                 )
 
             case "&":
@@ -1458,3 +1516,71 @@ class Compiler(c_ast.NodeVisitor):
 
     def visit_StaticAssert(self, _: c_ast.StaticAssert):
         raise CCNotImplemented("static assertion")
+
+    def emitBuiltinCall(self, name: str, *args: Value | c_ast.Node):
+        if name in self._builtins:
+            self._builtins[name] += 1
+        self.emitCall(f"__builtin_{name}", *args)
+
+    def emitCall(self, name: str, *args: Value | c_ast.Node):
+        n = 0
+        # push arguments
+        for arg in reversed(args):
+            if isinstance(arg, c_ast.Node):
+                self.visit(arg)
+                arg = self.getNodeValue(arg)
+            match arg:
+                case Constant() | Variable() | TemporaryValue():
+                    arg.push(self._asm)
+                case _:
+                    unreachable()
+            n += align(arg.getType().size(), 4)
+
+        self._asm.emit(f"call ${name}")
+
+        # restore sp
+        if n > 0:
+            self._asm.emit(f"addi sp, sp, -${n}")
+
+    """
+    void *__builtin_memset(void *s, int c, size_t n) {
+        char *p1 = s, *p2 = s + n;
+        while (p1 < p2)
+            *(p1++) = c;
+        return s;
+    }
+    """
+
+    def _emitBuiltinMemset(self):
+        name = "__builtin_memset"
+        sec = self._asm._secText
+        sec.add(f".global ${name}")
+        sec.add(f'.type ${name}, "function"')
+        sec.add(".align 2")
+        sec.addLabel(f"{name}")
+
+        # load arguments
+        Argument("s", PointerType(self.getType("void")), 8).load(self._asm, "a0")
+        Argument("c", self.getType("int"), 12).load(self._asm, "a1")
+        Argument("n", self.getType("size_t"), 16).load(self._asm, "a2")
+
+        sec.addRaw(
+            """
+            blez    a2, $2f
+            add     a2, a2, a0
+            mv      a3, a0
+        1:
+            addi    a4, a3, 1
+            sb      a3, a1, 0
+            mv      a3, a4
+            bltu    a4, a2, $1b
+        2:
+            ret
+            """
+        )
+        sec.add(f".size ${name}, -($. ${name})")
+
+    def emitBuiltins(self):
+        for name, n in self._builtins.items():
+            if n > 0:
+                getattr(self, f"_emitBuiltin{name[0].upper() + name[1:]}")()

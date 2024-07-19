@@ -74,26 +74,57 @@ int a6[2][3] = {{ 1, 2, 3}, {4, 5}};
 */
 
 void f() {
-  static int a1[] = {1};
-  int a2[] = {1};
+  static int a7[] = {1};
+  int a8[] = {1};
+
+  int i1 = a1[0];
+  int i2 = a5[1][2];
+
+  int *p1 = a1;
+  int i3 = p1[0];
 }
 /*
-FuncDef:
+  FuncDef:
     Decl: f, [], [], [], []
       FuncDecl:
         TypeDecl: f, [], None
           IdentifierType: ['void']
     Compound:
-      Decl: a1, [], [], ['static'], []
+      Decl: a7, [], [], ['static'], []
         ArrayDecl: []
-          TypeDecl: a1, [], None
+          TypeDecl: a7, [], None
             IdentifierType: ['int']
         InitList:
           Constant: int, 1
-      Decl: a2, [], [], [], []
+      Decl: a8, [], [], [], []
         ArrayDecl: []
-          TypeDecl: a2, [], None
+          TypeDecl: a8, [], None
             IdentifierType: ['int']
         InitList:
           Constant: int, 1
+      Decl: i1, [], [], [], []
+        TypeDecl: i1, [], None
+          IdentifierType: ['int']
+        ArrayRef:
+          ID: a1
+          Constant: int, 0
+      Decl: i2, [], [], [], []
+        TypeDecl: i2, [], None
+          IdentifierType: ['int']
+        ArrayRef:
+          ArrayRef:
+            ID: a5
+            Constant: int, 1
+          Constant: int, 2
+      Decl: p1, [], [], [], []
+        PtrDecl: []
+          TypeDecl: p1, [], None
+            IdentifierType: ['int']
+        ID: a1
+      Decl: i3, [], [], [], []
+        TypeDecl: i3, [], None
+          IdentifierType: ['int']
+        ArrayRef:
+          ID: p1
+          Constant: int, 0
 */

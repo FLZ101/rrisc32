@@ -33,3 +33,12 @@ struct A a;
     TypeDecl: a, [], None
       Struct: A
 */
+
+void f() {
+  int i1 = a.i;
+}
+/*
+  StructRef: .
+    ID: a
+    ID: i
+*/
