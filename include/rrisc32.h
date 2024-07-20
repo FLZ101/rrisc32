@@ -158,6 +158,8 @@ const u32 fp = s0;
 
 } // namespace Reg
 
+bool isSameReg(const std::string &s1, const std::string &s2);
+
 enum class InstrType { Invalid, R, I, S, B, U, J };
 
 struct InstrDesc {

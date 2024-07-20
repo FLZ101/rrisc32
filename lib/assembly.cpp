@@ -1058,11 +1058,13 @@ void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
   for (const auto &expr : stmt->arguments)
     format.push_back(expr.type == Expr::Reg ? 'r' : 'i');
 
+  const Expr &e0 = stmt->arguments[0];
+  const Expr &e1 = stmt->arguments[1];
+  const Expr &e2 = stmt->arguments[2];
+
   Expr x0 = Expr("x0", Expr::Reg);
   Expr sp = Expr("sp", Expr::Reg);
   if (name == "li" && format == "ri") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     ExprVal v1 = evalExpr(e1);
     if (v1.isInt()) {
       s64 imm = v1.getI();
@@ -1073,126 +1075,113 @@ void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
     }
     addInstr("lui", {e0, Expr("hi", {e1})});
     addInstr("addi", {e0, e0, Expr("lo", {e1})});
+
   } else if (isOneOf(name, {"lb", "lh", "lw", "lbu", "lhu"}) &&
              format == "ri") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
+    // load global
     addInstr("lui", {e0, Expr("hi", {e1})});
     addInstr(name, {e0, e0, Expr("lo", {e1})});
+
   } else if (isOneOf(name, {"sb", "sh", "sw", "sbu", "shu"}) &&
              format == "rri") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
-    const Expr &e2 = stmt->arguments[2];
+    // store global
     addInstr("lui", {e0, Expr("hi", {e2})});
     addInstr(name, {e0, e1, Expr("lo", {e2})});
+
   } else if (name == "nop" && format == "") {
     addInstr("addi", {x0, x0, Expr(0)});
+
   } else if (name == "mv" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
-    if (e0.s != e1.s)
+    if (!rrisc32::isSameReg(e0.s, e1.s))
       addInstr("addi", {e0, e1, Expr(0)});
+
   } else if (name == "push" && format == "r") {
-    const Expr &e0 = stmt->arguments[0];
     addInstr("addi", {sp, sp, Expr(-4)});
     addInstr("sw", {sp, e0, Expr(0)});
+
   } else if (name == "pop") {
     if (isOneOf(format, {"r", ""})) {
-      if (format == "r") {
-        const Expr &e0 = stmt->arguments[0];
+      if (format == "r")
         addInstr("lw", {e0, sp, Expr(0)});
-      }
       addInstr("addi", {sp, sp, Expr(4)});
     }
+
   } else if (name == "not" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("xori", {e0, e1, Expr(-1)});
+
   } else if (name == "neg" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("sub", {e0, x0, e1});
+
   } else if (name == "sext.b" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("slli", {e0, e1, Expr(24)});
     addInstr("srai", {e0, e0, Expr(24)});
+
   } else if (name == "sext.h" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("slli", {e0, e1, Expr(16)});
     addInstr("srai", {e0, e0, Expr(16)});
+
   } else if (name == "zext.b" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("andi", {e0, e1, Expr(255)});
+
   } else if (name == "zext.h" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("slli", {e0, e1, 16});
     addInstr("srli", {e0, e0, 16});
+
   } else if (name == "seqz" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("sltiu", {e0, e1, Expr(1)});
+
   } else if (name == "snez" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("sltu", {e0, x0, e1});
+
   } else if (name == "sltz" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("slt", {e0, e1, x0});
+
   } else if (name == "sgtz" && format == "rr") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     addInstr("slt", {e0, x0, e1});
+
   } else if (isOneOf(name, {"beqz", "bnez", "bgez", "bltz"}) &&
              format == "ri") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     expandInstr(substr(name, 0, -1), {e0, x0, e1});
+
   } else if (isOneOf(name, {"blez", "bgtz"}) && format == "ri") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
     std::string s = substr(name, 0, -1);
     s[1] = s[1] == 'l' ? 'g' : 'l';
     expandInstr(s, {x0, e0, e1});
+
   } else if (isOneOf(name, {"bgt", "ble", "bgtu", "bleu"}) && format == "rri") {
-    const Expr &e0 = stmt->arguments[0];
-    const Expr &e1 = stmt->arguments[1];
-    const Expr &e2 = stmt->arguments[2];
     std::string s = name;
     s[1] = s[1] == 'l' ? 'g' : 'l';
     expandInstr(s, {e1, e0, e2});
+
   } else if (isOneOf(name, {"beq", "bne", "blt", "bge", "bltu", "bgeu"}) &&
              format == "rri") {
     // TODO: convert conditional branches into far branches when necessary
     addInstr(std::move(stmt));
+
   } else if (name == "j" && format == "i") {
-    const Expr &e0 = stmt->arguments[0];
     addInstr("jal", {x0, e0});
+
   } else if (name == "jal" && format == "i") {
-    const Expr &e0 = stmt->arguments[0];
     addInstr("jal", {Expr("x1", Expr::Reg), e0});
+
   } else if (name == "jr" && format == "r") {
-    const Expr &e0 = stmt->arguments[0];
     addInstr("jalr", {x0, e0, Expr(0)});
+
   } else if (name == "jalr" && format == "r") {
-    const Expr &e0 = stmt->arguments[0];
     addInstr("jalr", {Expr("x1", Expr::Reg), e0, Expr(0)});
+
   } else if (name == "ret" && format == "") {
     addInstr("jalr", {x0, Expr("x1", Expr::Reg), Expr(0)});
+
   } else if (name == "call" && format == "i") {
-    const Expr &e0 = stmt->arguments[0];
     addInstr("lui", {Expr("x1", Expr::Reg), Expr("hi", {e0})});
     addInstr("jalr",
              {Expr("x1", Expr::Reg), Expr("x1", Expr::Reg), Expr("lo", {e0})});
+
   } else if (name == "tail" && format == "i") {
-    const Expr &e0 = stmt->arguments[0];
     addInstr("lui", {Expr("x6", Expr::Reg), Expr("hi", {e0})});
     addInstr("jalr", {x0, Expr("x6", Expr::Reg), Expr("lo", {e0})});
+
   } else {
     addInstr(std::move(stmt));
   }

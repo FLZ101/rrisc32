@@ -30,25 +30,6 @@ def log2(i: int):
     return arr.index(i)
 
 
-def checkImm(i: int, n: int):
-    mins = (1 << (n - 1)) - (1 << n)
-    maxs = (1 << (n - 1)) - 1
-    return mins <= i <= maxs
-
-
-def checkImmI(i: int):
-    return checkImm(i, 12)
-
-
-def checkImmS(i: int):
-    return checkImm(i, 12)
-
-
-def checkImmB(i: int):
-    assert i & 1 == 0
-    return checkImm(i, 13)
-
-
 # https://en.cppreference.com/w/c/language/type
 class Type(ABC):
     def name(self) -> str:
@@ -314,32 +295,20 @@ class Variable(LValue):
         else:
             assert _offset is not None
 
-            def _load(mnemonic: str, r: str, i: int):
-                if checkImmI(i):
-                    asm.emit(f"{mnemonic} {r}, fp, {i}")
-                else:
-                    asm.emit(
-                        [
-                            f"lui t0, %hi({i})",
-                            f"add t0, t0, fp",
-                            f"{mnemonic} {r}, t0, %lo({i})",
-                        ]
-                    )
-
             match sz:
                 case 8:
-                    _load("lw", r1, _offset)
-                    _load("lw", r2, _offset + 4)
+                    asm.emitFormatI("lw", r1, "fp", _offset)
+                    asm.emitFormatI("lw", r2, "fp", _offset + 4)
                 case 4:
-                    _load("lw", r1, _offset)
+                    asm.emitFormatI("lw", r1, "fp", _offset)
                 case 2:
                     assert isinstance(ty, IntType)
                     mnemonic = "lhu" if ty._unsigned else "lh"
-                    _load(mnemonic, r1, _offset)
+                    asm.emitFormatI(mnemonic, r1, "fp", _offset)
                 case 1:
                     assert isinstance(ty, IntType)
                     mnemonic = "lbu" if ty._unsigned else "lb"
-                    _load(mnemonic, r1, _offset)
+                    asm.emitFormatI(mnemonic, r1, "fp", _offset)
                 case _:
                     unreachable()
 
@@ -670,6 +639,82 @@ class Asm:
 
     def emit(self, s: str | list[str]):
         self._secText.add(s)
+
+    def checkImm(self, i: int, n: int):
+        mins = (1 << (n - 1)) - (1 << n)
+        maxs = (1 << (n - 1)) - 1
+        return mins <= i <= maxs
+
+    def checkImmI(self, i: int):
+        return self.checkImm(i, 12)
+
+    def checkImmS(self, i: int):
+        return self.checkImm(i, 12)
+
+    def emitFormatI(self, mnemonic: str, rd: str, rs1: str, i: int):
+        assert mnemonic in [
+            "addi",
+            "xori",
+            "ori",
+            "andi",
+            "slli",
+            "srli",
+            "srai",
+            "slti",
+            "sltiu",
+            "lb",
+            "lh",
+            "lw",
+            "lbu",
+            "lhu",
+        ]
+        if self.checkImmI(i):
+            self.emit(f"{mnemonic} {rd}, {rs1}, {i}")
+        else:
+            assert rs1 not in ["t0", "x5"]
+
+            if mnemonic not in [
+                "lb",
+                "lh",
+                "lw",
+                "lbu",
+                "lhu",
+            ]:
+
+                def _getRMnemonic():
+                    _ = str(reversed(mnemonic))
+                    _ = _.replace("i", "", 1)
+                    _ = str(reversed(_))
+                    return _
+
+                self.emit(
+                    [
+                        f"li t0, {i}",
+                        f"{_getRMnemonic()} {rd}, {rs1}, t0",
+                    ]
+                )
+            else:
+                self.emit(
+                    [
+                        f"lui t0, %hi({i})",
+                        f"add t0, t0, {rs1}",
+                        f"{mnemonic} {rd}, t0, %lo({i})",
+                    ]
+                )
+
+    def emitFormatS(self, mnemonic: str, rs1: str, rs2: str, i: int):
+        assert mnemonic in ["sb", "sh", "sw"]
+
+        if self.checkImmS(i):
+            self.emit(f"{mnemonic} {rs1}, {rs2}, {i}")
+        else:
+            self.emit(
+                [
+                    f"lui t0, %hi({i})",
+                    f"add t0, t0, {rs1}",
+                    f"{mnemonic} t0, {rs2}, %lo({i})",
+                ]
+            )
 
     def emitPrelogue(self):
         self.emit(["push ra", "push fp", "mv fp, sp"])

@@ -43,6 +43,10 @@ u32 getReg(const std::string &name) {
   UNKNOWN_REGISTER(name);
 }
 
+bool isSameReg(const std::string &s1, const std::string &s2) {
+  return getReg(s1) == getReg(s2);
+}
+
 // Except for the 5-bit immediates used in CSR instructions, immediates are
 // always sign-extended.
 
