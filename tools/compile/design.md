@@ -215,3 +215,15 @@
   ```
 
 * statements do not change sp
+
+* sizeof
+
+  only support the following forms:
+
+  ```
+  // sizeof(T)
+  sizeof(int)
+
+  // sizeof(id)
+  sizeof(i)
+  ```

@@ -237,6 +237,18 @@ class Value(ABC):
         return self._type
 
 
+"""
+The following expressions are lvalues:
+
+* identifiers
+* string literals
+* the result of a member access (dot) operator if its left-hand argument is lvalue
+* the result of a member access through pointer -> operator
+* the result of the indirection (unary *) operator applied to a pointer to object
+* the result of the subscription operator ([])
+"""
+
+
 class LValue(Value):
     pass
 
@@ -360,54 +372,6 @@ class StrLiteral(LValue):
         self._label = ""
 
 
-# o.x
-class MemberAccessExpr(LValue):
-    def __init__(self, o: LValue, x: Field) -> None:
-        self._o = o
-        self._x = x
-        self._type = x._type
-
-
-# p->x
-class MemberAccessThroughPointerExpr(LValue):
-    def __init__(self, p: Value, x: Field) -> None:
-        self._p = p
-        self._x = x
-        self._type = x._type
-
-
-# *p
-class PointerDereferenceExpr(LValue):
-    def __init__(self, p: Value) -> None:
-        self._p = p
-
-        ty: PointerType = p.getType()
-        self._type = ty._base
-
-
-# p[i]
-class ArraySubscriptExpr(LValue):
-    def __init__(self, p: Value, i: Value) -> None:
-        self._p = p
-        self._i = i
-
-        ty: ArrayType | PointerType = p.getType()
-        self._type = ty._base
-
-
-# &o
-class AddressOfExpr(RValue):
-    def __init__(self, o: LValue, ty: PointerType = None):
-        self._o = o
-        self._type = ty or PointerType(o.getType())
-
-
-class CastExpr(RValue):
-    def __init__(self, o: Value, ty: Type) -> None:
-        self._o = 0
-        self._type = ty
-
-
 # https://en.cppreference.com/w/c/language/constant_expression
 class Constant(RValue):
 
@@ -478,6 +442,33 @@ class TemporaryValue(RValue):
         if sz == 8:
             asm.emit("push a1")
         asm.emit("push a0")
+
+
+"""
+int i;
+i = 1;
+(int)i = 2; // error: assignment to cast is illegal
+"""
+
+
+class CastedLValue(RValue):
+    def __init__(self, v: LValue) -> None:
+        self._type = v.getType()
+        self._v = v
+
+    def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        match self._v:
+            case Variable() | TemporaryValue():
+                self._v.load(asm, r1, r2)
+            case _:
+                unreachable()
+
+    def push(self, asm: "Asm"):
+        match self._v:
+            case Constant() | Variable() | TemporaryValue():
+                self._v.push(asm)
+            case _:
+                unreachable()
 
 
 class Scope(ABC):
@@ -733,12 +724,6 @@ class Asm:
         self._secBss.save(o)
 
 
-class NodeRecord:
-    def __init__(self) -> None:
-        self._type: Type = None
-        self._value: Value = None
-
-
 def unescapeStr(s: str) -> str:
     arr = []
 
@@ -780,6 +765,18 @@ def formatNode(node: c_ast.Node):
     return "%s %s" % (node.__class__.__qualname__, node.coord)
 
 
+class NodeRecord:
+    def __init__(self, *, ty: Type | None = None, v: Value | None = None) -> None:
+        self._type: Type = ty
+        self._value: Value = v
+
+
+class Node(c_ast.Node):
+    def __init__(self, *, ty: Type | None = None, v: Value | None = None) -> None:
+        self._type = ty
+        self._value = v
+
+
 class Compiler(c_ast.NodeVisitor):
     def __init__(self) -> None:
         self._path = []
@@ -790,7 +787,8 @@ class Compiler(c_ast.NodeVisitor):
         self._func: Function = None
 
         self._asm = Asm()
-        self._builtins: dict[str, int] = {"memset": 0}
+
+        self._skipCodegen = False
 
         def _addType(ty: Type, names: list[str] | None = None):
             if names is None:
@@ -839,13 +837,26 @@ class Compiler(c_ast.NodeVisitor):
         """
         self._nodeRecords: dict[c_ast.Node, NodeRecord] = {}
 
-    def getNodeRecord(self, node: c_ast.Node) -> NodeRecord:
+    def getNodeRecord(self, node: c_ast.Node) -> NodeRecord | Node:
+        if isinstance(node, Node):
+            return node
+
+        self.visit(node)
         if node not in self._nodeRecords:
-            self._nodeRecords[node] = NodeRecord()
+            pass
         return self._nodeRecords[node]
 
+    def setNodeRecord(
+        self, node: c_ast.Node, *, ty: Type | None = None, v: Value | None = None
+    ):
+        assert node not in self._nodeRecords and not isinstance(node, Node)
+        self._nodeRecords[node] = NodeRecord(ty=ty, v=v)
+
     def setNodeType(self, node: c_ast.Node, ty: Type):
-        self.getNodeRecord(node)._type = ty
+        self.setNodeRecord(node, ty=ty)
+
+    def setNodeValue(self, node: c_ast.Node, v: Value):
+        self.setNodeRecord(node, v=v)
 
     def getNodeType(self, node: c_ast.Node) -> Type:
         r = self.getNodeRecord(node)
@@ -854,15 +865,16 @@ class Compiler(c_ast.NodeVisitor):
         assert r._type
         return r._type
 
-    def setNodeValue(self, node: c_ast.Node, value: Value):
-        self.getNodeRecord(node)._value = value
-
     def getNodeValue(self, node: c_ast.Node, ty: Type | None = None) -> Value:
         r = self.getNodeRecord(node)
-        assert r._value is not None
-        if ty is None:
-            return r._value
-        return self.convert(ty, r._value)
+        return r._value if ty is None else self.convert(ty, r._value)
+
+    def loadValue(self, v: Value, r1: str = "a0", r2: str = "a1"):
+        match v:
+            case Constant() | Variable() | TemporaryValue() | CastedLValue():
+                v.load(self._asm, r1, r2)
+            case _:
+                unreachable()
 
     def loadNodeValue(
         self,
@@ -872,11 +884,7 @@ class Compiler(c_ast.NodeVisitor):
         r2: str = "a1",
     ):
         v = self.getNodeValue(node, ty)
-        match v:
-            case Constant() | Variable() | TemporaryValue():
-                v.load(self._asm, r1, r2)
-            case _:
-                unreachable()
+        self.loadValue(v, r1, r2)
 
     def getNodeIntConstant(self, node: c_ast.Node) -> int:
         ic = self.getNodeValue(node)
@@ -905,9 +913,24 @@ class Compiler(c_ast.NodeVisitor):
         return IntConstant(i, self.getType(ty))
 
     def visit(self, node: c_ast.Node):
+        if isinstance(node, Node):
+            return
+        if node in self._nodeRecords:
+            return
+
         try:
             self._path.append(node)
+
+            _sizeof = isinstance(node, c_ast.UnaryOp) and node.op == "sizeof"
+            if _sizeof:
+                _skipCodegen = self._skipCodegen
+                self._skipCodegen = True
+
             super().visit(node)
+
+            if _sizeof:
+                self._skipCodegen = _skipCodegen
+
             self._path.pop()
         except CCError as ex:
             print(traceback.format_exc())
@@ -930,7 +953,6 @@ class Compiler(c_ast.NodeVisitor):
         self._asm.save(o)
 
     def visit_TypeDecl(self, node: c_ast.TypeDecl):
-        self.visit(node.type)
         self.setNodeType(node, self.getNodeType(node.type))
 
     def visit_IdentifierType(self, node: c_ast.IdentifierType):
@@ -940,20 +962,16 @@ class Compiler(c_ast.NodeVisitor):
     def visit_ArrayDecl(self, node: c_ast.ArrayDecl):
         dim = node.dim
         if dim:
-            self.visit(node.dim)
             dim = self.getNodeIntConstant(node.dim)
             if dim < 1:
                 raise CCError("not greater than zero")
 
-        self.visit(node.type)
         self.setNodeType(node, ArrayType(self.getNodeType(node.type), dim))
 
     def visit_PtrDecl(self, node: c_ast.PtrDecl):
-        self.visit(node.type)
         self.setNodeType(node, PointerType(self.getNodeType(node.type)))
 
     def visit_Typedef(self, node: c_ast.Typedef):
-        self.visit(node.type)
         self.curScope.addSymbol(node.name, self.getNodeType(node.type))
 
     def visit_Struct(self, node: c_ast.Struct):
@@ -968,8 +986,7 @@ class Compiler(c_ast.NodeVisitor):
             decl: c_ast.Decl
             if not decl.name:
                 raise CCNotImplemented("anonymous field")
-            self.visit(decl)
-            fields.append(Field(self.getNodeType(decl.type), decl.name))
+            fields.append(Field(self.getNodeType(decl), decl.name))
 
         ty = self.curScope.findSymbol(node.name)
         if isinstance(ty, StructType) and not ty.isComplete():  # declared
@@ -1061,7 +1078,7 @@ class Compiler(c_ast.NodeVisitor):
         return False
 
     # https://en.cppreference.com/w/c/language/conversion
-    def tryConvert(self, t1: Type, v: Value):
+    def tryConvert(self, t1: Type, v: Value) -> Value:
         t2 = v.getType()
 
         if self.isCompatible(t1, t2):
@@ -1072,8 +1089,12 @@ class Compiler(c_ast.NodeVisitor):
         """
         int arr[] = {1, 2, 3};
         int *p1 = arr; // &arr[0]
-        int *p2 = &arr; // error: initialization of 'int *' from incompatible pointer type 'int (*)[3]'
-        int **p3 = &arr; // error: initialization of 'int **' from incompatible pointer type 'int (*)[3]'
+
+        int *p2 = &arr;
+        // error: initialization of 'int *' from incompatible pointer type 'int (*)[3]'
+
+        int **p3 = &arr;
+        // error: initialization of 'int **' from incompatible pointer type 'int (*)[3]'
         """
         if (
             isinstance(t1, PointerType)
@@ -1081,10 +1102,16 @@ class Compiler(c_ast.NodeVisitor):
             and isinstance(v, LValue)
             and self.isCompatible(t1._base, t2._base)
         ):
+            # TODO remove
             if isinstance(v, StrLiteral):
                 assert v._label
                 return SymConstant(v._label, PointerType(v._type._base))
-            return AddressOfExpr(ArraySubscriptExpr(v, self.getIC(0, "size_t")))
+
+            # &arr[0]
+            node = c_ast.UnaryOp(
+                "&", c_ast.ArrayRef(Node(v=v), Node(v=self.getIC(0, "size_t")))
+            )
+            return self.getNodeValue(node, t1)
 
         # function to pointer conversion
         if (
@@ -1092,13 +1119,45 @@ class Compiler(c_ast.NodeVisitor):
             and isinstance(t2, FunctionType)
             and self.isCompatible(t1._base, t2)
         ):
-            return AddressOfExpr(v, t1)
+            assert isinstance(v, Function)
+            return SymConstant(v._name, t1)
 
         # integer conversion
         if isinstance(t1, IntType) and isinstance(t2, IntType):
             if isinstance(v, IntConstant):
-                return IntConstant(t1.convert(v._i), t1)
-            return CastExpr(v, t1)
+                return IntConstant(v._i, t1)
+
+            sz1 = t1.size()
+            sz2 = t2.size()
+            if sz1 == sz2:
+                v._type = t1
+                return v
+
+            if sz1 > sz2:
+                if sz1 < 8:
+                    v._type = t1
+                    return v
+                self.loadValue(v)
+                self._asm.emit("srai a1, a0, 31")
+                return TemporaryValue(t1)
+
+            self.loadValue(v)
+            match sz1:
+                case 4:
+                    pass
+                case 2:
+                    if t1._unsigned:
+                        self._asm.emit("zext.h a0, a0")
+                    else:
+                        self._asm.emit("sext.h a0, a0")
+                case 1:
+                    if t1._unsigned:
+                        self._asm.emit("zext.b a0, a0")
+                    else:
+                        self._asm.emit("sext.b a0, a0")
+                case _:
+                    unreachable()
+            return TemporaryValue(t1)
 
         # pointer conversion
         if (
@@ -1114,27 +1173,72 @@ class Compiler(c_ast.NodeVisitor):
             and isinstance(v, IntConstant)
             and v._i == 0
         ):
-            return PtrConstant(0, PointerType(self.getType("void")))
+            return PtrConstant(0, t1)
 
         return None
 
     def convert(self, t1: Type, v: Value):
         res = self.tryConvert(t1, v)
         if res is None:
-            raise CCError(f"can not convert {res.getType()} to {t1}")
+            raise CCError(f"can not convert {v.getType()} to {t1}")
         return res
 
+    # https://en.cppreference.com/w/c/language/cast
     def cast(self, t1: Type, v: Value):
-        pass
+        res = self.tryConvert(t1, v)
+        if res is None:
+            t2 = v.getType()
+            match t1, t2:
+                # Any integer can be cast to any pointer type.
+                case PointerType(), IntType():
+                    res = self.tryConvert(self.getType("unsigned long"), v)
+                    match res:
+                        case IntConstant():
+                            res = PtrConstant(res._i, t1)
+                        case Variable() | TemporaryValue():
+                            res.load(self._asm)
+                            res = TemporaryValue(t1)
+                        case _:
+                            unreachable()
+
+                # Any pointer type can be cast to any integer type.
+                case IntType(), PointerType():
+                    match v:
+                        case PtrConstant():
+                            res = IntConstant(v._i, t1)
+                        case Constant() | Variable() | TemporaryValue():
+                            v.load(self._asm)
+                            res = TemporaryValue(self.getType("unsigned long"))
+                            res = self.tryConvert(t1, res)
+                        case _:
+                            unreachable()
+
+                # Any pointer to object can be cast to any other pointer to object.
+                # Any pointer to function can be cast to a pointer to any other function type.
+                case PointerType(), PointerType():
+                    _1 = isinstance(t1._base, FunctionType)
+                    _2 = isinstance(t2._base, FunctionType)
+                    if _1 == _2:
+                        v._type = t1
+                        res = v
+
+        if res is None:
+            raise CCError(f"can not cast {v.getType()} to {t1}")
+
+        # The value category of the cast expression is always non-lvalue.
+        if isinstance(res, LValue):
+            res = CastedLValue(res)
+        return res
 
     def visit_Decl(self, node: c_ast.Decl):
         if node.bitsize:
             raise CCNotImplemented("bitfield")
 
-        self.visit(node.type)
         ty = self.getNodeType(node.type)
         if ty is self.getType("void"):
             ty.checkComplete()  # trigger an exception
+
+        self.setNodeType(node, ty)
 
         # struct Foo { int i; };
         if not node.name:
@@ -1179,7 +1283,6 @@ class Compiler(c_ast.NodeVisitor):
                     self.getType("unsigned char"),
                 ]:
                     if not isinstance(init, c_ast.InitList):  # char s[] = "hello"
-                        self.visit(init)
                         sLit = self.getNodeStrLiteral(init)
 
                         if not _local:
@@ -1250,15 +1353,13 @@ class Compiler(c_ast.NodeVisitor):
                 if isinstance(init, c_ast.InitList):
                     raise CCError("invalid initializer")
 
-                self.visit(init)
-                v = self.getNodeValue(init, ty)
-
                 if not _local:
+                    v = self.getNodeValue(init, ty)
                     if not isinstance(v, Constant):
                         raise CCError("initializer element is not constant")
                     sec.addConstant(v)
                 else:
-                    self.visit(c_ast.Assignment("=", _genRef(), v))
+                    self.visit(c_ast.Assignment("=", _genRef(), init))
 
         if _global or _static:  # global/static variables
             sec = self._asm._secData if node.init else self._asm._secBss
@@ -1326,9 +1427,10 @@ class Compiler(c_ast.NodeVisitor):
                 self.setNodeValue(node, sLit)
 
                 def _shouldAdd():
+                    # char s[] = "hello";
                     p = self.parent()
                     if isinstance(p, c_ast.Decl) and isinstance(
-                        self.getNodeType(p.type), ArrayType
+                        self.getNodeType(p), ArrayType
                     ):
                         return False
                     return True
@@ -1409,7 +1511,6 @@ class Compiler(c_ast.NodeVisitor):
 
     # https://en.cppreference.com/w/c/language/function_declaration
     def visit_FuncDecl(self, node: c_ast.FuncDecl):
-        self.visit(node.type)
         ret = self.getNodeType(node.type)
 
         args: list[Type] = []
@@ -1428,15 +1529,12 @@ class Compiler(c_ast.NodeVisitor):
                 ellipsis = True
                 break
 
-            self.visit(arg)
-            ty = self.getNodeType(arg.type)
-
+            ty = self.getNodeType(arg)
             if isinstance(ty, VoidType):
                 if n != 1:
                     raise CCError("'void' must be the only argument")
                 # ignore the difference between f(void) and f()
                 break
-
             args.append(ty)
 
         self.setNodeType(
@@ -1445,14 +1543,7 @@ class Compiler(c_ast.NodeVisitor):
         )
 
     def visit_Typename(self, node: c_ast.Typename):
-        self.visit(node.type)
-
-    @property
-    def _skipCodegen(self) -> bool:
-        for node in reversed(self._path):
-            if isinstance(node, c_ast.UnaryOp) and node.op == "sizeof":
-                return True
-        return False
+        self.setNodeType(node, self.getNodeType(node.type))
 
     def visit_Compound(self, node: c_ast.Compound):
         isFuncBody = isinstance(self.parent(), c_ast.FuncDef)
@@ -1475,12 +1566,16 @@ class Compiler(c_ast.NodeVisitor):
         self.visit(node.expr)
         match node.op:
             case "sizeof":
-                ty = self.getNodeType(node.expr)
-                ty.checkComplete()
-                self.setNodeValue(
-                    node,
-                    self.getIC(ty.size(), "size_t"),
-                )
+                match node.expr:
+                    case c_ast.Typename() | c_ast.ID():
+                        ty = self.getNodeType(node.expr)
+                        ty.checkComplete()
+                        self.setNodeValue(
+                            node,
+                            self.getIC(ty.size(), "size_t"),
+                        )
+                    case _:
+                        raise CCNotImplemented()
 
             case "&":
                 v = self.getNodeValue(node.expr)
@@ -1494,7 +1589,8 @@ class Compiler(c_ast.NodeVisitor):
                 raise CCError("unknown unary operator", node.op)
 
     def visit_Cast(self, node: c_ast.Cast):
-        pass
+        v = self.cast(self.getNodeType(node.to_type), self.getNodeValue(node.expr))
+        self.setNodeValue(node, v)
 
     def visit_ArrayRef(self, node: c_ast.ArrayRef):
         pass
@@ -1575,7 +1671,7 @@ class Compiler(c_ast.NodeVisitor):
                 self.visit(arg)
                 arg = self.getNodeValue(arg)
             match arg:
-                case Constant() | Variable() | TemporaryValue():
+                case Constant() | Variable() | TemporaryValue() | CastedLValue():
                     arg.push(self._asm)
                 case _:
                     unreachable()
