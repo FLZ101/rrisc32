@@ -1,7 +1,7 @@
 // RUN: rrisc32-cc -o %t.s %s
 // RUN: cat %t.s | filecheck %s --check-prefix=CC
 
-void f1() {}
+static void f1() {}
 
 int f2() { return 1; }
 
@@ -9,7 +9,7 @@ int f3(int i, int j, int k) { return k; }
 
 // CC:         .text
 // CC-NEXT:
-// CC-NEXT:    .global $f1
+// CC-NEXT:    .local $f1
 // CC-NEXT:    .type $f1, "function"
 // CC-NEXT:    .align 2
 // CC-NEXT:f1:

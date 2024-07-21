@@ -767,8 +767,8 @@ def formatNode(node: c_ast.Node):
 
 class NodeRecord:
     def __init__(self, *, ty: Type | None = None, v: Value | None = None) -> None:
-        self._type: Type = ty
-        self._value: Value = v
+        self._type = ty
+        self._value = v
 
 
 class Node(c_ast.Node):
@@ -1259,7 +1259,7 @@ class Compiler(c_ast.NodeVisitor):
             return
 
         _global = self.curScope is self._gScope
-        _static = "static" in node.quals
+        _static = "static" in node.storage
         _local = not _global and not _static
 
         _path = []
@@ -1483,7 +1483,7 @@ class Compiler(c_ast.NodeVisitor):
         sec = self._asm._secText
         sec.addEmptyLine()
 
-        if "static" in decl.quals:
+        if "static" in decl.storage:
             sec.add(f".local ${funcName}")
         else:
             sec.add(f".global ${funcName}")
