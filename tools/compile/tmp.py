@@ -3,6 +3,7 @@ import io
 import traceback
 
 from abc import ABC
+from typing import Callable, Optional
 
 from pycparser import c_ast
 
@@ -36,14 +37,14 @@ class Type(ABC):
         return getattr(self, "_name", "")
 
     def isComplete(self) -> bool:
-        return getattr(self, "_size", None) is not None
+        return hasattr(self, "_size")
 
     def checkComplete(self):
         if not self.isComplete():
             raise CCError("incomplete type", self)
 
     def size(self) -> int:
-        assert self.isComplete()
+        self.checkComplete()
         return self._size
 
     def alignment(self) -> int:
@@ -192,6 +193,11 @@ class StructType(Type):
         self._fill = align(offset, alignment) - offset
         self._size = offset + self._fill
 
+    def getField(self, name: str):
+        if name not in self._fieldByName:
+            raise CCError("invalid field", name)
+        return self._fieldByName[name]
+
     def __repr__(self) -> str:
         if self._name:
             return self._name
@@ -203,6 +209,12 @@ class PointerType(Type):
         self._base = base
         self._size = 4
         self._alignment = 4
+
+    def toFunction(self):
+        return isinstance(self._base, FunctionType)
+
+    def toObject(self):
+        return not self.toFunction()
 
     def __repr__(self) -> str:
         return "%r*" % self._base
@@ -236,6 +248,32 @@ class Value(ABC):
     def getType(self) -> Type:
         return self._type
 
+    def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        raise NotImplementedError()
+
+    def loadable(self):
+        match self.getType():
+            case IntType() | PointerType():
+                return hasattr(self, "load")
+            case _:
+                return False
+
+    def push(self, asm: "Asm"):
+        if not self.loadable():
+            raise NotImplementedError()
+
+        self.load(asm, "t0", "t1")
+        if self._type.size() == 8:
+            asm.emit("push t1")
+        asm.emit("push t0")
+
+    def pop(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        if not self.loadable():
+            raise NotImplementedError()
+        asm.emit(f"pop {r1}")
+        if self._type.size() == 8:
+            asm.emit(f"pop {r2}")
+
 
 """
 The following expressions are lvalues:
@@ -250,7 +288,31 @@ The following expressions are lvalues:
 
 
 class LValue(Value):
-    pass
+
+    def addressOf(self) -> "RValue":
+        raise NotImplementedError()
+
+    def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        assert self.loadable()
+        ma = MemoryAccess(self.addressOf())
+        ma.load(asm, r1, r2)
+
+    def store(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        assert self.storeable()
+        ma = MemoryAccess(self.addressOf())
+        ma.store(asm, r1, r2)
+
+    def storeable(self):
+        match self.getType():
+            case IntType() | PointerType():
+                return hasattr(self, "store")
+            case _:
+                return False
+
+
+def checkLValue(v: Value):
+    if not isinstance(v, LValue):
+        raise CCError("not a lvalue")
 
 
 class RValue(Value):
@@ -272,6 +334,9 @@ class Function(Value):
         self._name = name
         self._type = ty
 
+    def toSymConstant(self) -> "SymConstant":
+        return SymConstant(self._name, PointerType(self._type))
+
 
 class Variable(LValue):
     def __init__(self, name: str, ty: Type) -> None:
@@ -281,55 +346,6 @@ class Variable(LValue):
     def __repr__(self) -> str:
         return "(%s, %r)" % (self._name, self._type)
 
-    def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
-        _label = getattr(self, "_label", None)
-        _offset = getattr(self, "_offset", None)
-
-        ty = self._type
-        sz = ty.size()
-        if _label is not None:
-            match sz:
-                case 8:
-                    asm.emit(f"lw {r1}, ${_label}")
-                    asm.emit(f"lw {r2}, +(${_label} 4)")
-                case 4:
-                    asm.emit(f"lw {r1}, ${_label}")
-                case 2:
-                    assert isinstance(ty, IntType)
-                    mnemonic = "lhu" if ty._unsigned else "lh"
-                    asm.emit(f"{mnemonic} {r1}, ${_label}")
-                case 1:
-                    assert isinstance(ty, IntType)
-                    mnemonic = "lbu" if ty._unsigned else "lb"
-                    asm.emit(f"{mnemonic} {r1}, ${_label}")
-                case _:
-                    unreachable()
-        else:
-            assert _offset is not None
-
-            match sz:
-                case 8:
-                    asm.emitFormatI("lw", r1, "fp", _offset)
-                    asm.emitFormatI("lw", r2, "fp", _offset + 4)
-                case 4:
-                    asm.emitFormatI("lw", r1, "fp", _offset)
-                case 2:
-                    assert isinstance(ty, IntType)
-                    mnemonic = "lhu" if ty._unsigned else "lh"
-                    asm.emitFormatI(mnemonic, r1, "fp", _offset)
-                case 1:
-                    assert isinstance(ty, IntType)
-                    mnemonic = "lbu" if ty._unsigned else "lb"
-                    asm.emitFormatI(mnemonic, r1, "fp", _offset)
-                case _:
-                    unreachable()
-
-    def push(self, asm: "Asm"):
-        self.load(asm, "t0", "t1")
-        if self._type.size() == 8:
-            asm.emit("push t1")
-        asm.emit("push t0")
-
 
 class GlobalVariable(Variable):
     def __init__(self, name: str, ty: Type, _static=False) -> None:
@@ -337,11 +353,17 @@ class GlobalVariable(Variable):
         self._label = name
         self._static = _static
 
+    def addressOf(self) -> RValue:
+        return SymConstant(self._label, PointerType(self._type))
+
 
 class StaticVariable(Variable):
     def __init__(self, name: str, ty: Type, label: str) -> None:
         super().__init__(name, ty)
         self._label = label
+
+    def addressOf(self) -> RValue:
+        return SymConstant(self._label, PointerType(self._type))
 
 
 class ExternVariable(Variable):
@@ -349,17 +371,26 @@ class ExternVariable(Variable):
         super().__init__(name, ty)
         self._label = name
 
+    def addressOf(self) -> RValue:
+        return SymConstant(self._label, PointerType(self._type))
+
 
 class LocalVariable(Variable):
     def __init__(self, name: str, ty: Type, offset: int) -> None:
         super().__init__(name, ty)
         self._offset = offset
 
+    def addressOf(self) -> RValue:
+        return StackFrameOffset(self._offset, PointerType(self._type))
+
 
 class Argument(Variable):
     def __init__(self, name: str, ty: Type, offset: int) -> None:
         super().__init__(name, ty)
         self._offset = offset
+
+    def addressOf(self) -> RValue:
+        return StackFrameOffset(self._offset, PointerType(self._type))
 
 
 class StrLiteral(LValue):
@@ -371,13 +402,16 @@ class StrLiteral(LValue):
 
         self._label = ""
 
+    def addressOf(self) -> RValue:
+        assert self._label
+        return SymConstant(self._label, PointerType(self._type._base))
+
 
 # https://en.cppreference.com/w/c/language/constant_expression
 class Constant(RValue):
 
     def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
         sz = self._type.size()
-        assert sz in [1, 2, 4, 8]
         i = getattr(self, "_i", None)
         if i is not None:
             if sz == 8:
@@ -387,16 +421,16 @@ class Constant(RValue):
         else:
             raise NotImplementedError()
 
-    def push(self, asm: "Asm"):
-        self.load(asm, "t0", "t1")
-        if self._type.size() == 8:
-            asm.emit("push t1")
-        asm.emit("push t0")
-
 
 class IntConstant(Constant):
     def __init__(self, i: int, ty: IntType) -> None:
         self._i = ty.convert(i)
+        self._type = ty
+
+
+class StackFrameOffset(Constant):
+    def __init__(self, i: int, ty: PointerType) -> None:
+        self._i = i
         self._type = ty
 
 
@@ -429,7 +463,6 @@ class TemporaryValue(RValue):
 
     def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
         sz = self._type.size()
-        assert sz in [1, 2, 4, 8]
         if sz == 8:
             if r2 != "a1":
                 asm.emit(f"mv {r2}, a1")
@@ -438,10 +471,185 @@ class TemporaryValue(RValue):
 
     def push(self, asm: "Asm"):
         sz = self._type.size()
-        assert sz in [1, 2, 4, 8]
         if sz == 8:
             asm.emit("push a1")
         asm.emit("push a0")
+
+
+# https://en.cppreference.com/w/c/language/operator_member_access
+class MemoryAccess(LValue):
+    def __init__(self, addr: RValue) -> None:
+        if isinstance(addr, LValue):
+            addr = CastedLValue(addr)
+        assert isinstance(addr, RValue)
+        self._addr: RValue = addr
+
+        ty = addr.getType()
+        assert isinstance(ty, PointerType) and ty.toObject()
+        self._type = ty._base
+        match self._type:
+            case IntType() | PointerType():
+                pass
+            case _:
+                unreachable()
+
+    def addressOf(self) -> RValue:
+        return self._addr
+
+    def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        ty = self._type
+        sz = ty.size()
+        match self._addr:
+            case SymConstant():  # global/static variables
+                _name = self._addr._name
+                _offset = self._addr._offset
+                match sz:
+                    case 8:
+                        asm.emit(f"lw {r1}, +(${_name} {_offset})")
+                        asm.emit(f"lw {r2}, +(${_name} {_offset + 4})")
+                    case 4:
+                        asm.emit(f"lw {r1}, +(${_name} {_offset})")
+                    case 2:
+                        assert isinstance(ty, IntType)
+                        mnemonic = "lhu" if ty._unsigned else "lh"
+                        asm.emit(f"{mnemonic} {r1}, +(${_name} {_offset})")
+                    case 1:
+                        assert isinstance(ty, IntType)
+                        mnemonic = "lbu" if ty._unsigned else "lb"
+                        asm.emit(f"{mnemonic} {r1}, +(${_name} {_offset})")
+                    case _:
+                        unreachable()
+
+            case StackFrameOffset():  # local variables
+                _offset = self._addr._i
+                match sz:
+                    case 8:
+                        asm.emitFormatI("lw", r1, "fp", _offset)
+                        asm.emitFormatI("lw", r2, "fp", _offset + 4)
+                    case 4:
+                        asm.emitFormatI("lw", r1, "fp", _offset)
+                    case 2:
+                        assert isinstance(ty, IntType)
+                        mnemonic = "lhu" if ty._unsigned else "lh"
+                        asm.emitFormatI(mnemonic, r1, "fp", _offset)
+                    case 1:
+                        assert isinstance(ty, IntType)
+                        mnemonic = "lbu" if ty._unsigned else "lb"
+                        asm.emitFormatI(mnemonic, r1, "fp", _offset)
+                    case _:
+                        unreachable()
+
+            case PtrConstant():
+                _offset = self._addr._i
+                match sz:
+                    case 8:
+                        asm.emit(f"lw {r1}, {_offset}")
+                        asm.emit(f"lw {r2}, {_offset + 4}")
+                    case 4:
+                        asm.emit(f"lw {r1}, {_offset}")
+                    case 2:
+                        assert isinstance(ty, IntType)
+                        mnemonic = "lhu" if ty._unsigned else "lh"
+                        asm.emit(f"{mnemonic} {r1}, {_offset}")
+                    case 1:
+                        assert isinstance(ty, IntType)
+                        mnemonic = "lbu" if ty._unsigned else "lb"
+                        asm.emit(f"{mnemonic} {r1}, {_offset}")
+                    case _:
+                        unreachable()
+            case TemporaryValue():
+                match sz:
+                    case 8:
+                        asm.emitFormatI("lw", r1, "a0")
+                        asm.emitFormatI("lw", r2, "a0", 4)
+                    case 4:
+                        asm.emitFormatI("lw", r1, "a0")
+                    case 2:
+                        assert isinstance(ty, IntType)
+                        mnemonic = "lhu" if ty._unsigned else "lh"
+                        asm.emitFormatI(mnemonic, r1, "a0")
+                    case 1:
+                        assert isinstance(ty, IntType)
+                        mnemonic = "lbu" if ty._unsigned else "lb"
+                        asm.emitFormatI(mnemonic, r1, "a0")
+                    case _:
+                        unreachable()
+            case _:
+                pass
+
+    def store(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
+        ty = self._type
+        sz = ty.size()
+        match self._addr:
+            case SymConstant():  # global/static variables
+                _name = self._addr._name
+                _offset = self._addr._offset
+                match sz:
+                    case 8:
+                        asm.emit(f"sw {r1}, +(${_name} {_offset})")
+                        asm.emit(f"sw {r2}, +(${_name} {_offset + 4})")
+                    case 4:
+                        asm.emit(f"sw {r1}, +(${_name} {_offset})")
+                    case 2:
+                        assert isinstance(ty, IntType)
+                        asm.emit(f"sh {r1}, +(${_name} {_offset})")
+                    case 1:
+                        assert isinstance(ty, IntType)
+                        asm.emit(f"sb {r1}, +(${_name} {_offset})")
+                    case _:
+                        unreachable()
+
+            case StackFrameOffset():  # local variables
+                _offset = self._addr._i
+                match sz:
+                    case 8:
+                        asm.emitFormatS("sw", r1, "fp", _offset)
+                        asm.emitFormatS("sw", r2, "fp", _offset + 4)
+                    case 4:
+                        asm.emitFormatS("sw", r1, "fp", _offset)
+                    case 2:
+                        assert isinstance(ty, IntType)
+                        asm.emitFormatS("sh", r1, "fp", _offset)
+                    case 1:
+                        assert isinstance(ty, IntType)
+                        asm.emitFormatS("sb", r1, "fp", _offset)
+                    case _:
+                        unreachable()
+
+            case PtrConstant():
+                _offset = self._addr._i
+                match sz:
+                    case 8:
+                        asm.emit(f"sw {r1}, {_offset}")
+                        asm.emit(f"sw {r2}, {_offset + 4}")
+                    case 4:
+                        asm.emit(f"sw {r1}, {_offset}")
+                    case 2:
+                        assert isinstance(ty, IntType)
+                        asm.emit(f"sh {r1}, {_offset}")
+                    case 1:
+                        assert isinstance(ty, IntType)
+                        asm.emit(f"sb {r1}, {_offset}")
+                    case _:
+                        unreachable()
+            case TemporaryValue():
+                assert "a0" not in [r1, r2]
+                match sz:
+                    case 8:
+                        asm.emitFormatS("sw", r1, "a0")
+                        asm.emitFormatS("sw", r2, "a0", 4)
+                    case 4:
+                        asm.emitFormatS("sw", r1, "a0")
+                    case 2:
+                        assert isinstance(ty, IntType)
+                        asm.emitFormatS("sh", r1, "a0")
+                    case 1:
+                        assert isinstance(ty, IntType)
+                        asm.emitFormatS("sb", r1, "a0")
+                    case _:
+                        unreachable()
+            case _:
+                pass
 
 
 """
@@ -457,18 +665,7 @@ class CastedLValue(RValue):
         self._v = v
 
     def load(self, asm: "Asm", r1: str = "a0", r2: str = "a1"):
-        match self._v:
-            case Variable() | TemporaryValue():
-                self._v.load(asm, r1, r2)
-            case _:
-                unreachable()
-
-    def push(self, asm: "Asm"):
-        match self._v:
-            case Constant() | Variable() | TemporaryValue():
-                self._v.push(asm)
-            case _:
-                unreachable()
+        self._v.load(asm, r1, r2)
 
 
 class Scope(ABC):
@@ -642,7 +839,7 @@ class Asm:
     def checkImmS(self, i: int):
         return self.checkImm(i, 12)
 
-    def emitFormatI(self, mnemonic: str, rd: str, rs1: str, i: int):
+    def emitFormatI(self, mnemonic: str, rd: str, rs1: str, i: int = 0):
         assert mnemonic in [
             "addi",
             "xori",
@@ -693,7 +890,8 @@ class Asm:
                     ]
                 )
 
-    def emitFormatS(self, mnemonic: str, rs1: str, rs2: str, i: int):
+    # sb/h/w rs2, i(rs1)
+    def emitFormatS(self, mnemonic: str, rs2: str, rs1: str, i: int = 0):
         assert mnemonic in ["sb", "sh", "sw"]
 
         if self.checkImmS(i):
@@ -766,13 +964,13 @@ def formatNode(node: c_ast.Node):
 
 
 class NodeRecord:
-    def __init__(self, *, ty: Type | None = None, v: Value | None = None) -> None:
+    def __init__(self, *, ty: Optional[Type] = None, v: Optional[Value] = None) -> None:
         self._type = ty
         self._value = v
 
 
 class Node(c_ast.Node):
-    def __init__(self, *, ty: Type | None = None, v: Value | None = None) -> None:
+    def __init__(self, *, ty: Optional[Type] = None, v: Optional[Value] = None) -> None:
         self._type = ty
         self._value = v
 
@@ -790,7 +988,7 @@ class Compiler(c_ast.NodeVisitor):
 
         self._skipCodegen = False
 
-        def _addType(ty: Type, names: list[str] | None = None):
+        def _addType(ty: Type, names: Optional[list[str]] = None):
             if names is None:
                 names = []
             if ty.name():
@@ -837,6 +1035,8 @@ class Compiler(c_ast.NodeVisitor):
         """
         self._nodeRecords: dict[c_ast.Node, NodeRecord] = {}
 
+        self._builtins = {"memset": 0}
+
     def getNodeRecord(self, node: c_ast.Node) -> NodeRecord | Node:
         if isinstance(node, Node):
             return node
@@ -847,7 +1047,7 @@ class Compiler(c_ast.NodeVisitor):
         return self._nodeRecords[node]
 
     def setNodeRecord(
-        self, node: c_ast.Node, *, ty: Type | None = None, v: Value | None = None
+        self, node: c_ast.Node, *, ty: Optional[Type] = None, v: Optional[Value] = None
     ):
         assert node not in self._nodeRecords and not isinstance(node, Node)
         self._nodeRecords[node] = NodeRecord(ty=ty, v=v)
@@ -865,21 +1065,17 @@ class Compiler(c_ast.NodeVisitor):
         assert r._type
         return r._type
 
-    def getNodeValue(self, node: c_ast.Node, ty: Type | None = None) -> Value:
+    def getNodeValue(self, node: c_ast.Node, ty: Optional[Type] = None) -> Value:
         r = self.getNodeRecord(node)
         return r._value if ty is None else self.convert(ty, r._value)
 
     def loadValue(self, v: Value, r1: str = "a0", r2: str = "a1"):
-        match v:
-            case Constant() | Variable() | TemporaryValue() | CastedLValue():
-                v.load(self._asm, r1, r2)
-            case _:
-                unreachable()
+        v.load(self._asm, r1, r2)
 
     def loadNodeValue(
         self,
         node: c_ast.Node,
-        ty: Type | None = None,
+        ty: Optional[Type] = None,
         r1: str = "a0",
         r2: str = "a1",
     ):
@@ -943,6 +1139,9 @@ class Compiler(c_ast.NodeVisitor):
         self._scopes.append(LocalScope(self.curScope))
 
     def exitScope(self):
+        prev = self.curScope._prev
+        if isinstance(prev, LocalScope):
+            self._asm.emitFormatI("addi", "sp", "fp", f"{-prev._offset}")
         self._scopes.pop()
 
     @property
@@ -950,6 +1149,7 @@ class Compiler(c_ast.NodeVisitor):
         return self._scopes[-1]
 
     def save(self, o: io.StringIO):
+        self.emitBuiltins()
         self._asm.save(o)
 
     def visit_TypeDecl(self, node: c_ast.TypeDecl):
@@ -1080,6 +1280,14 @@ class Compiler(c_ast.NodeVisitor):
     # https://en.cppreference.com/w/c/language/conversion
     def tryConvert(self, t1: Type, v: Value) -> Value:
         t2 = v.getType()
+        if isinstance(t1, PointerType) and t1._base is None:
+            match t2:
+                case ArrayType() | PointerType():
+                    t1._base = t2._base
+                case FunctionType():
+                    t1._base = t2
+                case _:
+                    return None
 
         if self.isCompatible(t1, t2):
             v._type = t1
@@ -1102,11 +1310,6 @@ class Compiler(c_ast.NodeVisitor):
             and isinstance(v, LValue)
             and self.isCompatible(t1._base, t2._base)
         ):
-            # TODO remove
-            if isinstance(v, StrLiteral):
-                assert v._label
-                return SymConstant(v._label, PointerType(v._type._base))
-
             # &arr[0]
             node = c_ast.UnaryOp(
                 "&", c_ast.ArrayRef(Node(v=v), Node(v=self.getIC(0, "size_t")))
@@ -1119,8 +1322,14 @@ class Compiler(c_ast.NodeVisitor):
             and isinstance(t2, FunctionType)
             and self.isCompatible(t1._base, t2)
         ):
-            assert isinstance(v, Function)
-            return SymConstant(v._name, t1)
+            match v:
+                case Function():
+                    return v.toSymConstant()
+                case TemporaryValue():
+                    v._type = t1
+                    return v
+                case _:
+                    unreachable()
 
         # integer conversion
         if isinstance(t1, IntType) and isinstance(t2, IntType):
@@ -1216,9 +1425,7 @@ class Compiler(c_ast.NodeVisitor):
                 # Any pointer to object can be cast to any other pointer to object.
                 # Any pointer to function can be cast to a pointer to any other function type.
                 case PointerType(), PointerType():
-                    _1 = isinstance(t1._base, FunctionType)
-                    _2 = isinstance(t2._base, FunctionType)
-                    if _1 == _2:
+                    if t1.toFunction() == t2.toFunction():
                         v._type = t1
                         res = v
 
@@ -1276,8 +1483,10 @@ class Compiler(c_ast.NodeVisitor):
                         unreachable()
             return res
 
-        def _gen(ty: Type, init: c_ast.Node):
+        def _gen(ty: Type, init: c_ast.Node, onSizeKnown: Callable[[], None] = None):
             if isinstance(ty, ArrayType):
+                ty._base.checkComplete()
+
                 if ty._base in [
                     self.getType("char"),
                     self.getType("unsigned char"),
@@ -1311,6 +1520,8 @@ class Compiler(c_ast.NodeVisitor):
                 n = len(init.exprs)
                 if not ty.isComplete():
                     ty.setDim(n)
+                    if onSizeKnown:
+                        onSizeKnown()
                 ty.checkComplete()
 
                 if n > ty._dim:
@@ -1379,7 +1590,6 @@ class Compiler(c_ast.NodeVisitor):
                 self.curScope.addSymbol(node.name, StaticVariable(node.name, ty, label))
 
             if not node.init:
-                ty.checkComplete()
                 sec.add(f".fill {ty.size()}")
             else:
                 _gen(ty, node.init)
@@ -1394,17 +1604,26 @@ class Compiler(c_ast.NodeVisitor):
 
         else:  # local variables
             scope: LocalScope = self.curScope
-            scope._offset += align(ty.size(), 4)
             scope.addSymbol(node.name, LocalVariable(node.name, ty, scope._offset))
+
             if node.init:
-                self.emitBuiltinCall(
-                    "memset",
-                    c_ast.UnaryOp("&", c_ast.ID(node.name)),  # s
-                    self.getIC(0),  # c
-                    self.getIC(ty.size(), "size_t"),  # n
-                )
+
+                def onSizeKnown():
+                    self.emitBuiltinCall(
+                        "memset",
+                        c_ast.UnaryOp("&", c_ast.ID(node.name)),  # s
+                        self.getIC(0),  # c
+                        self.getIC(ty.size(), "size_t"),  # n
+                    )
+
+                if ty.isComplete():
+                    onSizeKnown()
                 # translate the initialization into assignments
-                _gen(ty, node.init)
+                _gen(ty, node.init, onSizeKnown)
+
+            sz = align(ty.size(), 4)
+            scope._offset += sz
+            self._asm.emit(f"add sp, sp, {-sz}")
 
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
@@ -1433,6 +1652,11 @@ class Compiler(c_ast.NodeVisitor):
                         self.getNodeType(p), ArrayType
                     ):
                         return False
+
+                    # sizeof("hello")
+                    if isinstance(p, c_ast.UnaryOp) and p.op == "sizeof":
+                        return False
+
                     return True
 
                 if _shouldAdd():
@@ -1460,6 +1684,8 @@ class Compiler(c_ast.NodeVisitor):
             raise CCError("invalid literal", str(ex))
 
     def visit_ID(self, node: c_ast.ID):
+        assert not isinstance(self.parent(), c_ast.StructRef)
+
         _ = self.curScope.getSymbol(node.name)
         if isinstance(_, Type):
             self.setNodeType(node, _)
@@ -1563,13 +1789,11 @@ class Compiler(c_ast.NodeVisitor):
             self.exitScope()
 
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
-        self.visit(node.expr)
         match node.op:
             case "sizeof":
                 match node.expr:
-                    case c_ast.Typename() | c_ast.ID():
+                    case c_ast.Typename() | c_ast.ID() | c_ast.Constant():
                         ty = self.getNodeType(node.expr)
-                        ty.checkComplete()
                         self.setNodeValue(
                             node,
                             self.getIC(ty.size(), "size_t"),
@@ -1579,11 +1803,39 @@ class Compiler(c_ast.NodeVisitor):
 
             case "&":
                 v = self.getNodeValue(node.expr)
-                if isinstance(v, GlobalVariable) or isinstance(v, StaticVariable):
-                    self.setNodeValue(
-                        node, SymConstant(v._name, PointerType(v.getType()))
-                    )
-                # TODO
+                ty = v.getType()
+                if isinstance(ty, FunctionType()):
+                    match v:
+                        case Function():
+                            self.setNodeValue(node, v.toSymConstant())
+                        case TemporaryValue():
+                            v._type = PointerType(ty)
+                            self.setNodeValue(node, v)
+                        case _:
+                            unreachable()
+                else:
+                    match v:
+                        case LValue():
+                            self.setNodeValue(node, v.addressOf())
+                        case _:
+                            raise CCError(f"can not take address of rvalue")
+
+            case "*":
+                v = self.getNodeValue(node.expr, PointerType())
+                ty: PointerType = v.getType()
+                if ty.toFunction():
+                    match v:
+                        case SymConstant():
+                            self.setNodeValue(node, self.curScope.getFunction(v._name))
+                        case _:
+                            v.load()
+                            self.setNodeValue(node, TemporaryValue(ty._base))
+                else:
+                    match v:
+                        case SymConstant():
+                            self.setNodeValue(node, self.curScope.getVariable(v._name))
+                        case _:
+                            self.setNodeValue(node, MemoryAccess(v))
 
             case _:
                 raise CCError("unknown unary operator", node.op)
@@ -1593,13 +1845,106 @@ class Compiler(c_ast.NodeVisitor):
         self.setNodeValue(node, v)
 
     def visit_ArrayRef(self, node: c_ast.ArrayRef):
-        pass
+        # translate arr[i] to *(arr + i)
+        node2 = c_ast.UnaryOp("*", c_ast.BinaryOp("+", node.name, node.subscript))
+        self.setNodeValue(node, self.getNodeValue(node2))
 
     def visit_StructRef(self, node: c_ast.StructRef):
-        pass
+        v = self.getNodeValue(node.name)
+        ty = v.getType()
+        match node.type:
+            # translate foo.x to *(X*)((void *)&foo + offset(x))
+            case ".":
+                match ty:
+                    case StructType():
+                        checkLValue(v)
+                        field = ty.getField(node.field.name)
+                        node2 = c_ast.UnaryOp(
+                            "*",
+                            c_ast.Cast(
+                                Node(ty=PointerType(field._type)),
+                                c_ast.BinaryOp(
+                                    "+",
+                                    c_ast.Cast(
+                                        Node(ty=PointerType(self.getType("void"))),
+                                        c_ast.UnaryOp("&", Node(v=v)),
+                                    ),
+                                    Node(v=self.getIC(field._offset)),
+                                ),
+                            ),
+                        )
+                        self.setNodeValue(node, self.getNodeValue(node2))
+                    case _:
+                        raise CCError("not a struct")
 
+            # translate foo->x to *(X*)((void *)foo + offset(x))
+            case "->":
+                match ty:
+                    case PointerType(StructType()):
+                        field = ty._base.getField(node.field.name)
+                        node2 = c_ast.UnaryOp(
+                            "*",
+                            c_ast.Cast(
+                                Node(ty=PointerType(field._type)),
+                                c_ast.BinaryOp(
+                                    "+",
+                                    c_ast.Cast(
+                                        Node(ty=PointerType(self.getType("void"))),
+                                        Node(v=v),
+                                    ),
+                                    Node(v=self.getIC(field._offset)),
+                                ),
+                            ),
+                        )
+                    case _:
+                        raise CCError("not a struct pointer")
+            case _:
+                unreachable()
+
+    # https://en.cppreference.com/w/c/language/operator_assignment
     def visit_Assignment(self, node: c_ast.Assignment):
-        pass
+        a: LValue = self.getNodeValue(node.lvalue)
+        checkLValue(a)
+
+        ty = a.getType()
+
+        addr = a.addressOf()
+        addr.push(self._asm)
+
+        op = node.op
+
+        match ty:
+            case StructType():
+                if op != "=":
+                    raise CCError(f"can not {op} a struct")
+
+                b: LValue = self.getNodeValue(node.lvalue)
+                if not self.isCompatible(ty, b.getType()):
+                    raise CCError(f"can not assign from {b.getType()} to {ty}")
+
+                assert isinstance(b, LValue)
+                addr.pop(self._asm, "a2", "a3")
+                b.addressOf().push(self._asm)
+                self.emitBuiltinCall()
+            case IntType() | PointerType():
+                pass
+            case _:
+                unreachable()
+
+        match node.op:
+            case "=":
+                self.loadNodeValue(node.rvalue, ty, "a2", "a3")
+
+                addr.pop(self._asm)
+                ma = MemoryAccess(TemporaryValue(addr.getType()))
+                ma.store(self._asm, "a2", "a3")
+
+                self._asm.emit("mv a0, a2")
+                self._asm.emit("mv a1, a3")
+                self.setNodeValue(TemporaryValue(ty))
+
+            case _:
+                pass
 
     def visit_BinaryOp(self, node: c_ast.BinaryOp):
         pass
@@ -1659,8 +2004,8 @@ class Compiler(c_ast.NodeVisitor):
         raise CCNotImplemented("static assertion")
 
     def emitBuiltinCall(self, name: str, *args: Value | c_ast.Node):
-        if name in self._builtins:
-            self._builtins[name] += 1
+        assert name in self._builtins
+        self._builtins[name] += 1
         self.emitCall(f"__builtin_{name}", *args)
 
     def emitCall(self, name: str, *args: Value | c_ast.Node):
@@ -1695,7 +2040,7 @@ class Compiler(c_ast.NodeVisitor):
     def _emitBuiltinMemset(self):
         name = "__builtin_memset"
         sec = self._asm._secText
-        sec.add(f".global ${name}")
+        sec.add(f".local ${name}")
         sec.add(f'.type ${name}, "function"')
         sec.add(".align 2")
         sec.addLabel(f"{name}")
@@ -1724,4 +2069,5 @@ class Compiler(c_ast.NodeVisitor):
     def emitBuiltins(self):
         for name, n in self._builtins.items():
             if n > 0:
-                getattr(self, f"_emitBuiltin{name[0].upper() + name[1:]}")()
+                _f = getattr(self, f"_emitBuiltin{name[0].upper() + name[1:]}")
+                _f()

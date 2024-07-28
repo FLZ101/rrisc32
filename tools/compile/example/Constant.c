@@ -48,3 +48,12 @@ char s2[] = "world";
         IdentifierType: ['char']
     Constant: string, "world"
 */
+
+int i5 = sizeof("hello");
+/*
+  Decl: i5, [], [], [], []
+    TypeDecl: i5, [], None
+      IdentifierType: ['int']
+    UnaryOp: sizeof
+      Constant: string, "hello"
+*/
