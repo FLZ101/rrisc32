@@ -477,9 +477,7 @@ def addBuiltinTypes():
     addBuiltinType(VoidType())
 
     addBuiltinType(IntType("char", 1), ["signed char"])
-    addBuiltinType(
-        IntType("short", 2), ["short int", "signed short", "signed short int"]
-    )
+    addBuiltinType(IntType("short", 2), ["short int", "signed short", "signed short int"])
     addBuiltinType(IntType("int", 4), ["signed int"])
     addBuiltinType(
         IntType("long", 4),
@@ -494,9 +492,7 @@ def addBuiltinTypes():
     addBuiltinType(IntType("unsigned short", 2, True), ["unsigned short int"])
     addBuiltinType(IntType("unsigned int", 4, True), ["unsigned"])
     addBuiltinType(IntType("unsigned long", 4, True), ["unsigned long int", "size_t"])
-    addBuiltinType(
-        IntType("unsigned long long", 8, True, 4), ["unsigned long long int"]
-    )
+    addBuiltinType(IntType("unsigned long long", 8, True, 4), ["unsigned long long int"])
 
     # addBuiltinType(FloatType("float", 4))
     # addBuiltinType(FloatType("double", 4))
@@ -819,10 +815,7 @@ class Sema(NodeVisitor):
         if (
             isinstance(t1, PointerType)
             and isinstance(t2, PointerType)
-            and (
-                (t1._base is voidTy and t2.toObject())
-                or (t1.toObject() and t2._base is voidTy)
-            )
+            and ((t1._base is voidTy and t2.toObject()) or (t1.toObject() and t2._base is voidTy))
         ):
             match v2:
                 case PtrConstant():
@@ -839,8 +832,7 @@ class Sema(NodeVisitor):
         if (
             isinstance(t1, PointerType)
             and (
-                isinstance(v2, IntConstant)
-                or (isinstance(v2, PtrConstant) and t2._base is voidTy)
+                isinstance(v2, IntConstant) or (isinstance(v2, PtrConstant) and t2._base is voidTy)
             )
             and v2._i == 0
         ):
@@ -1271,21 +1263,8 @@ class Sema(NodeVisitor):
                         node.rvalue = self.convert(tyL, node.rvalue)
                         self.setNodeTypeR(node, tyL)
 
-                    case (
-                        "+="
-                        | "-="
-                        | "*="
-                        | "/="
-                        | "%="
-                        | "&="
-                        | "|="
-                        | "^="
-                        | "<<="
-                        | ">>="
-                    ):
-                        node.rvalue = c_ast.BinaryOp(
-                            node.op[:-1], node.lvalue, node.rvalue
-                        )
+                    case "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=":
+                        node.rvalue = c_ast.BinaryOp(node.op[:-1], node.lvalue, node.rvalue)
                         node.op = "="
                         self.visit_Assignment(node)
 
@@ -1309,17 +1288,13 @@ class Sema(NodeVisitor):
                 if isinstance(ty, FunctionType()):
                     match v:
                         case Function():
-                            self.setNodeValue(
-                                node, SymConstant(v._name, PointerType(ty))
-                            )
+                            self.setNodeValue(node, SymConstant(v._name, PointerType(ty)))
                         case _:
                             self.setNodeTypeR(PointerType(ty))
                 else:
                     match v:
                         case GlobalVariable() | StaticVariable():
-                            self.setNodeValue(
-                                node, SymConstant(v._label, PointerType(ty))
-                            )
+                            self.setNodeValue(node, SymConstant(v._label, PointerType(ty)))
                         case LValue():
                             self.setNodeTypeR(PointerType(ty))
                         case _:
@@ -1594,19 +1569,96 @@ class Sema(NodeVisitor):
                                 self.setNodeTypeR(node, getBuiltinType("int"))
 
                     case _:
-                        raise CCError(f"can not compare {tyL} and {tyR}")
+                        raise CCError(f"can not {node.op} {tyL} and {tyR}")
 
             case "<" | "<=" | ">" | ">=":
+                vL, tyL = self.tryConvertToPointer(node, "left")
+                vR, tyR = self.tryConvertToPointer(node, "right")
+
+                def _f():
+                    match vL, vR:
+                        case (IntConstant() | PtrConstant()), (IntConstant() | PtrConstant()):
+                            iL = vL._i
+                            iR = vR._i
+                            match node.op:
+                                case "<":
+                                    i = 1 if iL < iR else 0
+                                case "<=":
+                                    i = 1 if iL <= iR else 0
+                                case ">":
+                                    i = 1 if iL > iR else 0
+                                case ">=":
+                                    i = 1 if iL >= iR else 0
+                                case _:
+                                    unreachable()
+                            self.setNodeValue(node, getIntConstant(i, "int"))
+                        case _:
+                            self.setNodeTypeR(node, getBuiltinType("int"))
+
                 match tyL, tyR:
                     case IntType(), IntType():
-                        pass
+                        _f()
+                    case PointerType(), PointerType() if tyL.toObject() and tyR.toObject():
+                        _f()
+                    case _:
+                        raise CCError(f"can not {node.op} {tyL} and {tyR}")
 
             case _:
                 raise CCError("unknown binary operator", node.op)
 
     # https://en.cppreference.com/w/c/language/operator_other#Conditional_operator
     def visit_TernaryOp(self, node: c_ast.TernaryOp):
-        pass
+        vC, tyC = self.tryConvertToPointer(node, "cond")
+        vT, tyT = self.tryConvertToPointer(node, "iftrue")
+        vF, tyF = self.tryConvertToPointer(node, "iffalse")
+
+        match tyC:
+            case IntType() | PointerType():
+                pass
+            case _:
+                raise CCError("not an integer or a pointer")
+
+        match tyT, tyF:
+            case VoidType(), VoidType():
+                self.setNodeTypeR(node, getBuiltinType("void"))
+                return
+
+            case IntType(), IntType():
+                ty = getArithmeticCommonType(tyT, tyF)
+                node.iftrue = self.convert(ty, node.iftrue)
+                node.iffalse = self.convert(ty, node.iffalse)
+
+                match vC, vT, vF:
+                    case (IntConstant() | PtrConstant()), IntConstant(), IntConstant():
+                        i = vT._i if vC._i else vF._i
+                        self.setNodeValue(node, IntConstant(i, ty))
+                    case _:
+                        self.setNodeTypeR(node, ty)
+                return
+
+            case IntType(), PointerType():
+                vT, tyT = self.tryConvertToPointer(node, "iftrue", False, tyF)
+
+            case PointerType(), IntType():
+                vF, tyF = self.tryConvertToPointer(node, "iffalse", False, tyT)
+
+        def _f(ty):
+            match vC, vT, vF:
+                case (IntConstant() | PtrConstant()), PtrConstant(), PtrConstant():
+                    i = vT._i if vC._i else vF._i
+                    self.setNodeValue(node, PtrConstant(i, ty))
+                case _:
+                    self.setNodeTypeR(node, ty)
+
+        match tyT, tyF:
+            case PointerType(), PointerType() if isCompatible(tyT, tyF):
+                _f(tyT)
+            case PointerType(VoidType()), PointerType():
+                _f(tyT)
+            case PointerType(), PointerType(VoidType()):
+                _f(tyF)
+            case _:
+                raise CCError("incompatible operand types", tyT, tyF)
 
     # https://en.cppreference.com/w/c/language/operator_other#Comma_operator
     def visit_ExprList(self, node: c_ast.ExprList):
@@ -1615,11 +1667,31 @@ class Sema(NodeVisitor):
             ty = self.getNodeType(expr)
         self.setNodeTypeR(node, ty)
 
-    def visit_FuncCall(self, node: c_ast.FuncCall):
-        pass
-
     def visit_Alignas(self, _: c_ast.Alignas):
         raise CCNotImplemented("alignas")
+
+    def visit_FuncCall(self, node: c_ast.FuncCall):
+        v, ty = self.tryConvertToPointer(node, "name")
+        match ty:
+            case PointerType(FunctionType()):
+                tyF: FunctionType = ty._base
+                args: list[c_ast.Node] = node.args.exprs
+
+                if len(args) < len(tyF._args):
+                    raise CCError("too few arguments to function call")
+
+                if len(args) > len(tyF._args) and not tyF._ellipsis:
+                    raise CCError("too many arguments to function call")
+
+                for i in range(len(args)):
+                    if i < len(tyF._args):
+                        args[i] = self.convert(tyF._args[i], args[i])
+                    else:
+                        self.visit(args[i])
+
+                self.setNodeTypeR(tyF._ret)
+            case _:
+                raise CCError("not a pointer to function")
 
     def visit_Return(self, node: c_ast.Return):
         ret = self._func._type._ret

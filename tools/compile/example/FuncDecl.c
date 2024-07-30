@@ -126,3 +126,17 @@ int printf(const char *restrict format, ...);
       TypeDecl: printf, [], None
         IdentifierType: ['int']
 */
+
+void f8()
+{
+  printf("%d%d", 1, 2);
+}
+
+/*
+      FuncCall:
+        ID: printf
+        ExprList:
+          Constant: string, "%d%d"
+          Constant: int, 1
+          Constant: int, 2
+*/
