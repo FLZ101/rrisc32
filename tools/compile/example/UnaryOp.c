@@ -6,4 +6,13 @@ void f() {
         UnaryOp: &
           ID: a
     */
+
+   ++a;
+   a--;
+    /*
+        UnaryOp: ++
+            ID: a
+        UnaryOp: p--
+            ID: a
+    */
 }
