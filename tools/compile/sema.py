@@ -2,7 +2,7 @@ import sys
 import traceback
 
 from abc import ABC
-from typing import Callable, Optional
+from typing import Optional
 
 from pycparser import c_ast
 
@@ -297,9 +297,31 @@ class Function(Value):
         self._name = name
         self._type = ty
 
+        self._maxOffset = 0
+
+        self._labels = set()
+        self._gotos = set()
+
     def getStaticLabel(self, name: str, *, _i=[0]):
         _i[0] += 1
         return f"{self._name}.{name}.{_i[0]}"
+
+    def updateMaxOffset(self, offset: int):
+        if offset > self._maxOffset:
+            self._maxOffset = offset
+
+    def addLabel(self, label):
+        if label in self._labels:
+            raise CCError("duplicated label", label)
+        self._labels.add(label)
+
+    def addGoto(self, label):
+        self._gotos.add(label)
+
+    def checkLabels(self):
+        s = self._gotos - self._labels
+        if len(s) > 0:
+            raise CCError("unknown labels", s)
 
 
 class Variable(LValue):
@@ -673,7 +695,9 @@ class NodeVisitor(c_ast.NodeVisitor):
             return None
         return self._path[-(i + 1)]
 
-    def visit(self, node: c_ast.Node):
+    def visit(self, node: Optional[c_ast.Node]):
+        if not node:
+            return
         try:
             assert not isinstance(node, Node)
 
@@ -1071,14 +1095,15 @@ class Sema(NodeVisitor):
                 _check(ty, node.init)
 
         else:  # local variables
+            sz = align(ty.size(), 4)
             scope: LocalScope = self._scope
+            scope._offset += sz
             scope.addSymbol(node.name, LocalVariable(node.name, ty, scope._offset))
+
+            self._func.updateMaxOffset(scope._offset)
 
             if node.init:
                 _check(ty, node.init)
-
-            sz = align(ty.size(), 4)
-            scope._offset += sz
 
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
@@ -1115,9 +1140,10 @@ class Sema(NodeVisitor):
                 self.setNodeValue(node, IntConstant(i, ty))
                 return
 
-            raise CCNotImplemented(node.type)
+            raise CCError("unrecognized constant", node.type)
 
         except Exception as ex:
+            print(traceback.format_exc())
             raise CCError("invalid literal", str(ex))
 
     def visit_ID(self, node: c_ast.ID):
@@ -1159,6 +1185,7 @@ class Sema(NodeVisitor):
         self.visit(node.body)
 
         self.exitScope()
+        self._func.checkLabels()
         self._func = None
 
     # https://en.cppreference.com/w/c/language/function_declaration
@@ -1198,8 +1225,12 @@ class Sema(NodeVisitor):
         self.setNodeType(node, self.getNodeType(node.type))
 
     def visit_Compound(self, node: c_ast.Compound):
-        isFuncBody = isinstance(self.getParent(), c_ast.FuncDef)
-        if not isFuncBody:
+        shouldEnter = True
+        match self.getParent():
+            case c_ast.FuncDef() | c_ast.For():
+                shouldEnter = False
+
+        if shouldEnter:
             self.enterScope()
 
         r = self.getNodeRecord(node)
@@ -1209,7 +1240,7 @@ class Sema(NodeVisitor):
         for _ in block_items:
             self.visit(_)
 
-        if not isFuncBody:
+        if shouldEnter:
             self.exitScope()
 
     def visit_ArrayRef(self, node: c_ast.ArrayRef):
@@ -1252,7 +1283,7 @@ class Sema(NodeVisitor):
                 if node.op != "=":
                     raise CCError(f"can not {node.op} a struct")
 
-                vR, tyR = self.getNodeValueType(node.rvalue)
+                tyR = self.getNodeType(node.rvalue)
                 if not isCompatible(tyL, tyR):
                     raise CCError(f"can not assign {tyL} {tyR}")
                 self.setNodeTypeR(node, tyL)
@@ -1703,35 +1734,115 @@ class Sema(NodeVisitor):
             if not isinstance(ret, VoidType):
                 raise CCError("'return' with no value, in function returning non-void")
 
-    def visit_Break(self, node: c_ast.Break):
-        pass
-
-    def visit_Case(self, node: c_ast.Case):
-        pass
-
-    def visit_Continue(self, node: c_ast.Continue):
-        pass
-
-    def visit_Default(self, node: c_ast.Default):
-        pass
-
-    def visit_DoWhile(self, node: c_ast.DoWhile):
-        pass
-
-    def visit_For(self, node: c_ast.For):
-        pass
-
     def visit_If(self, node: c_ast.If):
-        pass
-
-    def visit_Switch(self, node: c_ast.Switch):
-        pass
+        ty = self.getNodeType(node.cond)
+        match ty:
+            case IntType() | PointerType():
+                self.visit(node.iftrue)
+                self.visit(node.iffalse)
+            case _:
+                raise CCError("not an integer or a pointer")
 
     def visit_While(self, node: c_ast.While):
-        pass
+        ty = self.getNodeType(node.cond)
+        match ty:
+            case IntType() | PointerType():
+                self.visit(node.stmt)
+            case _:
+                raise CCError("not an integer or a pointer")
 
-    def visit_Goto(self, _: c_ast.Goto):
-        raise CCNotImplemented("goto")
+    def visit_DoWhile(self, node: c_ast.DoWhile):
+        ty = self.getNodeType(node.cond)
+        match ty:
+            case IntType() | PointerType():
+                self.visit(node.stmt)
+            case _:
+                raise CCError("not an integer or a pointer")
 
-    def visit_StaticAssert(self, _: c_ast.StaticAssert):
-        raise CCNotImplemented("static assertion")
+    def visit_For(self, node: c_ast.For):
+        self.enterScope()
+
+        self.visit(node.init)
+
+        if node.cond:
+            ty = self.getNodeType(node.cond)
+            match ty:
+                case IntType() | PointerType():
+                    pass
+                case _:
+                    raise CCError("not an integer or a pointer")
+
+        self.visit(node.next)
+        self.visit(node.stmt)
+
+        self.exitScope()
+
+    def visit_Switch(self, node: c_ast.Switch):
+        ty = self.getNodeType(node.cond)
+        match ty:
+            case IntType():
+                self.visit(node.stmt)
+            case _:
+                raise CCError("not an integer")
+
+    def visit_Case(self, node: c_ast.Case):
+        if not isinstance(self.getParent(2), c_ast.Switch):
+            raise CCError("invalid 'case'")
+
+        ty = self.getNodeType(node.expr)
+        match ty:
+            case IntType():
+                for stmt in node.stmts:
+                    self.visit(stmt)
+            case _:
+                raise CCError("not an integer")
+
+    def visit_Default(self, node: c_ast.Default):
+        if not isinstance(self.getParent(2), c_ast.Switch):
+            raise CCError("invalid 'default'")
+
+        for stmt in node.stmts:
+            self.visit(stmt)
+
+    def visit_Break(self, _: c_ast.Break):
+        def _check():
+            for x in reversed(self._path[:-1]):
+                match x:
+                    case c_ast.While() | c_ast.DoWhile() | c_ast.For():
+                        return True
+                    case c_ast.Case() | c_ast.Default():
+                        return True
+            return False
+
+        if not _check():
+            raise CCError("invalid 'break'")
+
+    def visit_Continue(self, _: c_ast.Continue):
+        def _check():
+            for x in reversed(self._path[:-1]):
+                match x:
+                    case c_ast.While() | c_ast.DoWhile() | c_ast.For():
+                        return True
+            return False
+
+        if not _check():
+            raise CCError("invalid 'continue'")
+
+    def visit_Label(self, node: c_ast.Label):
+        if self._func is None:
+            raise CCError("unexpected label")
+        self._func.addLabel(node.name)
+        self.visit(node.stmt)
+
+    def visit_Goto(self, node: c_ast.Goto):
+        self._func.addGoto(node.name)
+
+    # https://en.cppreference.com/w/c/language/_Static_assert
+    def visit_StaticAssert(self, node: c_ast.StaticAssert):
+        v = self.getNodeValue(node.cond)
+        match v:
+            case IntConstant() | PtrConstant():
+                if v._i == 0:
+                    raise CCError("static assertion failed", node.message)
+            case _:
+                raise CCError("not an integer constant or a pointer constant")
