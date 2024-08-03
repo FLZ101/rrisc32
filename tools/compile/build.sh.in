@@ -18,5 +18,5 @@ fi
 
 python -m nuitka --follow-imports \
   --output-dir=$cmake_current_binary_dir \
-  --output-filename=$cmake_current_binary_dir/rrisc32-cc \
+  --output-filename=$cmake_binary_dir/bin/rrisc32-cc \
   main.py

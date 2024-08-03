@@ -355,7 +355,7 @@ class ExternVariable(Variable):
 class LocalVariable(Variable):
     def __init__(self, name: str, ty: Type, offset: int) -> None:
         super().__init__(name, ty)
-        self._offset = offset
+        self._offset = -offset
 
 
 class Argument(Variable):
@@ -406,18 +406,6 @@ class TemporaryValue(RValue):
     def __init__(self, ty: Type) -> None:
         self._type = ty
 
-
-"""
-int i;
-i = 1;
-(int)i = 2; // error: assignment to cast is illegal
-"""
-
-
-class CastedLValue(RValue):
-    def __init__(self, v: LValue) -> None:
-        self._type = v.getType()
-        self._v = v
 
 
 class Scope(ABC):
@@ -1277,6 +1265,12 @@ class Sema(NodeVisitor):
     def visit_Assignment(self, node: c_ast.Assignment):
         vL, tyL = self.getNodeValueType(node.lvalue)
         checkLValue(vL)
+
+        """
+        int i;
+        i = 1;
+        (int)i = 2; // error: assignment to cast is illegal
+        """
 
         match tyL:
             case StructType():
