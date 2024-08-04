@@ -5,29 +5,30 @@ from sema import *
 
 class TemporaryValue(RValue):
     def __init__(self, ty: Type) -> None:
-        self._type = ty
+        super().__init__(ty)
 
 
 class StackFrameOffset(Constant):
     def __init__(self, i: int, ty: PointerType) -> None:
+        super().__init__(ty)
         self._i = i
-        self._type = ty
 
 
 # https://en.cppreference.com/w/c/language/operator_member_access
 class MemoryAccess(LValue):
     def __init__(self, addr: Value) -> None:
-        self._addr = addr
-
         ty = addr.getType()
         assert isinstance(ty, PointerType) and ty.toObject()
 
-        self._type = ty._base
+        super().__init__(ty)
+
         match self._type:
             case IntType() | PointerType():
                 pass
             case _:
                 unreachable()
+
+        self._addr = addr
 
 
 class Fragment:
@@ -99,7 +100,7 @@ class Section:
         self.curFragment.add(name)
 
     def addFragment(self) -> Fragment:
-        self._fragments.append(Fragment(f"{self.name[1]}{len(self._fragments)}"))
+        self._fragments.append(Fragment(f"{self._name[1]}{len(self._fragments)}"))
         return self._fragments[-1]
 
     def ownFragment(self) -> Fragment:
@@ -141,17 +142,11 @@ class Asm:
         self._secData = Section(".data")
         self._secBss = Section(".bss")
 
-        self._strPool: dict[str, str] = {}
-
-        self._builtins = {'memset': 0, 'memcpy': 0}
+        self._builtins = {"memset": 0, "memcpy": 0}
 
     def addStr(self, sLit: StrLiteral) -> str:
-        s = sLit._s
-        if s not in self._strPool:
-            label = self._secRodata.addLocalLabel()
-            self._secRodata.add(f".asciz {sLit._sOrig}")
-            self._strPool[s] = label
-        sLit._label = self._strPool[s]
+        self._secRodata.addLabel(sLit._label)
+        self._secRodata.add(f".asciz {sLit._sOrig}")
 
     def emit(self, s: str | list[str]):
         self._secText.add(s)
@@ -555,6 +550,9 @@ class Codegen(NodeVisitor):
 
         self._asm = Asm()
 
+        for sLit in ctx._strPool.values():
+            self._asm.addStr(sLit)
+
     def save(self, o: io.StringIO):
         self._asm.save(o)
 
@@ -570,7 +568,7 @@ class Codegen(NodeVisitor):
             match ty:
                 case ArrayType():
                     match init:
-                        case c_ast.InitList:
+                        case c_ast.InitList():
                             for i, expr in enumerate(init.exprs):
                                 _gen(expr, offset, _local)
                                 offset += ty._base.size()
@@ -588,9 +586,7 @@ class Codegen(NodeVisitor):
                                     sec.add(f".fill {left}")
                             else:
                                 for i, c in enumerate(sLit._s):
-                                    _gen(
-                                        Node(IntConstant(ord(c), ty._base)), offset + i, _local
-                                    )
+                                    _gen(Node(IntConstant(ord(c), ty._base)), offset + i, _local)
 
                 case StructType():
                     n = len(init.exprs)
@@ -625,14 +621,15 @@ class Codegen(NodeVisitor):
                 if _ > 0:
                     sec.add(f".align {_}")
 
+                label = v._label
+                sec.addLabel(label)
+
                 if not node.init:
                     sec.add(f".fill {ty.size()}")
                 else:
                     _gen(node.init, 0, False)
 
-                label = v._label
-
-                if isinstance(v, StaticVariable()):
+                if isinstance(v, StaticVariable):
                     sec.add(f".local ${label}")
                 else:
                     sec.add(f".global ${label}")

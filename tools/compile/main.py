@@ -65,7 +65,7 @@ class CompileAction(Action):
             assert infile.endswith(".c")
             self._outfile = infile[:-2] + ".s"
 
-        ast = parse_file(infile, use_cpp=True, cpp_args=f"-nostdinc -I{includeDir}")
+        ast = parse_file(infile, use_cpp=True, cpp_args=["-nostdinc", f"-I{includeDir}"])
 
         ctx = NodeVisitorCtx()
         sm = Sema(ctx)
@@ -108,8 +108,12 @@ class LinkAction(Action):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-S", action="store_true", help="Compile only; do not assemble or link.")
-    parser.add_argument("-c", action="store_true", help="Compile and assemble, but do not link.")
+    parser.add_argument(
+        "--compile", action="store_true", help="Compile only; do not assemble or link."
+    )
+    parser.add_argument(
+        "--assemble", action="store_true", help="Compile and assemble, but do not link."
+    )
     parser.add_argument("-o", metavar="<outfile>")
     parser.add_argument("infiles", metavar="<infile>", nargs="+")
 
@@ -122,23 +126,27 @@ def main():
         raise Exception("input files should be *.c, *.s or *.o")
 
     actions: list[Action] = []
-    if args.S:
+    if args.compile:
         if args.o:
-            if len(infiles) > 0:
-                raise Exception("expect a single input file when both -S and -o are specified")
+            if len(infiles) != 1:
+                raise Exception(
+                    "expect a single input file when both --compile and -o are specified"
+                )
 
             infile = infiles[0]
             if infile.endswith(".c"):
                 actions.append(CompileAction(InputAction(infile), args.o))
         else:
-            for infile in infiles[0]:
+            for infile in infiles:
                 if infile.endswith(".c"):
                     actions.append(CompileAction(InputAction(infile)))
 
-    elif args.c:
+    elif args.assemble:
         if args.o:
-            if len(infiles) > 0:
-                raise Exception("expect a single input file when both -c and -o are specified")
+            if len(infiles) != 1:
+                raise Exception(
+                    "expect a single input file when both --assemble and -o are specified"
+                )
 
             infile = infiles[0]
             if infile.endswith(".c"):

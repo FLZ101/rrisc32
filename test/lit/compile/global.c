@@ -1,4 +1,4 @@
-// RUN: rrisc32-cc -o %t.s %s
+// RUN: rrisc32-cc --compile -o %t.s %s
 // RUN: cat %t.s | filecheck %s --check-prefix=CC
 
 int i1;
@@ -30,13 +30,13 @@ Goo *pg1 = &g1;
 // CC:          .text
 // CC-NEXT:
 // CC-NEXT:     .rodata
-// CC-NEXT: .L_r1:
+// CC-NEXT: .LS_1:
 // CC-NEXT:     .asciz ""
-// CC-NEXT: .L_r2:
+// CC-NEXT: .LS_2:
 // CC-NEXT:     .asciz "hello"
-// CC-NEXT: .L_r3:
+// CC-NEXT: .LS_3:
 // CC-NEXT:     .asciz "b"
-// CC-NEXT: .L_r4:
+// CC-NEXT: .LS_4:
 // CC-NEXT:     .asciz "c"
 // CC-NEXT:
 // CC-NEXT:     .data
@@ -73,14 +73,14 @@ Goo *pg1 = &g1;
 // CC-NEXT:
 // CC-NEXT:     .align 2
 // CC-NEXT: s1:
-// CC-NEXT:     .dw $.L_r1
+// CC-NEXT:     .dw $.LS_1
 // CC-NEXT:     .global $s1
 // CC-NEXT:     .type $s1, "object"
 // CC-NEXT:     .size $s1, -($. $s1)
 // CC-NEXT:
 // CC-NEXT:     .align 2
 // CC-NEXT: s2:
-// CC-NEXT:     .dw $.L_r2
+// CC-NEXT:     .dw $.LS_2
 // CC-NEXT:     .global $s2
 // CC-NEXT:     .type $s2, "object"
 // CC-NEXT:     .size $s2, -($. $s2)
@@ -108,7 +108,7 @@ Goo *pg1 = &g1;
 // CC-NEXT:     .dw 10
 // CC-NEXT:     .asciz "b"
 // CC-NEXT:     .fill 2
-// CC-NEXT:     .dw $.L_r4
+// CC-NEXT:     .dw $.LS_4
 // CC-NEXT:     .global $f1
 // CC-NEXT:     .type $f1, "object"
 // CC-NEXT:     .size $f1, -($. $f1)

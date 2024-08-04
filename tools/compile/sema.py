@@ -268,8 +268,8 @@ The following expressions are lvalues:
 
 
 class LValue(Value):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, ty: Type) -> None:
+        super().__init__(ty)
 
 
 def checkLValue(v: Value):
@@ -278,8 +278,8 @@ def checkLValue(v: Value):
 
 
 class RValue(Value):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, ty: Type) -> None:
+        super().__init__(ty)
 
 
 """
@@ -294,8 +294,8 @@ defined for pointers to functions and not for function designators themselves.
 
 class Function(Value):
     def __init__(self, name: str, ty: FunctionType) -> None:
+        super().__init__(ty)
         self._name = name
-        self._type = ty
 
         self._maxOffset = 0
 
@@ -326,8 +326,8 @@ class Function(Value):
 
 class Variable(LValue):
     def __init__(self, name: str, ty: Type) -> None:
+        super().__init__(ty)
         self._name = name
-        self._type = ty
 
     def __repr__(self) -> str:
         return "(%s, %r)" % (self._name, self._type)
@@ -366,36 +366,35 @@ class Argument(Variable):
 
 class StrLiteral(LValue):
     def __init__(self, s: str, sOrig: str, ty: Type) -> None:
-        super().__init__()
+        super().__init__(ArrayType(ty, len(s)))
         self._s = s
         self._sOrig = sOrig
-        self._type = ArrayType(ty, len(s))
 
         self._label = ""
 
 
 # https://en.cppreference.com/w/c/language/constant_expression
 class Constant(RValue):
-    pass
+    def __init__(self, ty: Type) -> None:
+        super().__init__(ty)
 
 
 class IntConstant(Constant):
     def __init__(self, i: int, ty: IntType) -> None:
+        super().__init__(ty)
         self._i = ty.convert(i)
-        self._type = ty
 
 
 class PtrConstant(Constant):
     def __init__(self, i: int, ty: PointerType) -> None:
+        super().__init__(ty)
         self._i = i
-        self._type = ty
 
 
 class SymConstant(Constant):
     def __init__(self, name: str, ty: PointerType, offset: int = 0) -> None:
-        super().__init__()
+        super().__init__(ty)
         self._name = name
-        self._type = ty
         self._offset = offset
 
         if offset:
@@ -404,8 +403,7 @@ class SymConstant(Constant):
 
 class TemporaryValue(RValue):
     def __init__(self, ty: Type) -> None:
-        self._type = ty
-
+        super().__init__(ty)
 
 
 class Scope(ABC):
@@ -422,7 +420,7 @@ class Scope(ABC):
         if name in self._symbolTable:
             return self._symbolTable[name]
         if self._prev:
-            return self._prev.getSymbol(name)
+            return self._prev.findSymbol(name)
         return None
 
     def getSymbol(self, name: str):
@@ -616,7 +614,11 @@ class Node(c_ast.Node):
             case Constant() | Variable():
                 self._value = v
             case _:
-                unreachable()
+                if type(v) is Value:  # a Type wrapper
+                    assert v._type
+                    self._value = v
+                else:
+                    unreachable()
 
 
 def unescapeStr(s: str) -> str:
@@ -657,7 +659,7 @@ def unescapeStr(s: str) -> str:
 
 
 class NodeRecord:
-    def __init__(self, v: Value) -> None:
+    def __init__(self, v: Value = None) -> None:
         self._value = v
 
         self._scope: LocalScope = None
@@ -669,9 +671,24 @@ class NodeVisitorCtx:
         self.records: dict[c_ast.Node, NodeRecord] = {}
         self.gScope = GlobalScope(builtinScope)
 
+        self._strPool: dict[str, StrLiteral] = {}
+
+    def addStr(self, sLit: StrLiteral):
+        s: str = sLit._s
+        if s not in self._strPool:
+            sLit._label = self.getStrLabel()
+            self._strPool[s] = sLit
+        else:
+            sLit._label = self._strPool[s]._label
+
+    def getStrLabel(self, *, _i=[0]):
+        _i[0] += 1
+        return f".LS_{_i[0]}"
+
 
 class NodeVisitor(c_ast.NodeVisitor):
     def __init__(self, ctx: NodeVisitorCtx) -> None:
+        self._ctx = ctx
         self._records = ctx.records
         self._scope: Scope = ctx.gScope
         self._func: Function = None
@@ -802,6 +819,8 @@ class Sema(NodeVisitor):
             match v2:
                 case GlobalVariable() | StaticVariable():
                     return Node(SymConstant(v2._label, t1))
+                case StrLiteral():
+                    return Node(SymConstant(v2._label, PointerType(t2._base)))
                 case _:
                     return c_ast.Cast(Node(Value(t1)), node)
 
@@ -929,7 +948,7 @@ class Sema(NodeVisitor):
     def visit_ArrayDecl(self, node: c_ast.ArrayDecl):
         dim = node.dim
         if dim:
-            dim = self.getNodeIntConstant(node.dim)
+            dim = self.getNodeIntConstant(node.dim)._i
             if dim < 1:
                 raise CCError("not greater than zero")
 
@@ -1033,6 +1052,7 @@ class Sema(NodeVisitor):
 
                 if not isinstance(init, c_ast.InitList):
                     raise CCError("invalid initializer")
+                self.setNodeType(init, ty)
 
                 n = len(init.exprs)
                 if not ty.isComplete():
@@ -1049,6 +1069,8 @@ class Sema(NodeVisitor):
             elif isinstance(ty, StructType):
                 if not isinstance(init, c_ast.InitList):
                     raise CCError("invalid initializer")
+                self.setNodeType(init, ty)
+
                 ty.checkComplete()
 
                 n = len(init.exprs)
@@ -1064,11 +1086,12 @@ class Sema(NodeVisitor):
                 if isinstance(init, c_ast.InitList):
                     raise CCError("invalid initializer")
 
+                init = self.convert(ty, init)
                 if not _local:
                     v = self.getNodeValue(init)
                     if not isinstance(v, Constant):
                         raise CCError("initializer element is not constant")
-                return self.convert(ty, init)
+                return init
 
         if _global or _static:  # global/static variables
             if _global:
@@ -1080,7 +1103,7 @@ class Sema(NodeVisitor):
                 )
 
             if node.init:
-                _check(ty, node.init)
+                node.init = _check(ty, node.init)
 
         else:  # local variables
             sz = align(ty.size(), 4)
@@ -1091,7 +1114,7 @@ class Sema(NodeVisitor):
             self._func.updateMaxOffset(scope._offset)
 
             if node.init:
-                _check(ty, node.init)
+                node.init = _check(ty, node.init)
 
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
@@ -1112,6 +1135,22 @@ class Sema(NodeVisitor):
                 s = unescapeStr(s[1:-1] + "\0")
                 sLit = StrLiteral(s, node.value, getBuiltinType("char"))
                 self.setNodeValue(node, sLit)
+
+                def _shouldAdd():
+                    # char s[] = "hello";
+                    p = self.getParent()
+                    if isinstance(p, c_ast.Decl) and isinstance(self.getNodeType(p), ArrayType):
+                        return False
+
+                    # sizeof("hello")
+                    if isinstance(p, c_ast.UnaryOp) and p.op == "sizeof":
+                        return False
+
+                    return True
+
+                if _shouldAdd():
+                    self._ctx.addStr(sLit)
+
                 return
 
             if "int" in node.type:
@@ -1310,7 +1349,7 @@ class Sema(NodeVisitor):
 
             case "&":
                 v, ty = self.getNodeValueType(node.expr)
-                if isinstance(ty, FunctionType()):
+                if isinstance(ty, FunctionType):
                     match v:
                         case Function():
                             self.setNodeValue(node, SymConstant(v._name, PointerType(ty)))
