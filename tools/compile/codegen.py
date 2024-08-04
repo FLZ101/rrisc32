@@ -179,6 +179,10 @@ class Asm:
             "lbu",
             "lhu",
         ]
+
+        if i == 0 and rd == rs1 and mnemonic in ["addi", "xori", "ori"]:
+            return
+
         if self.checkImmI(i):
             self.emit(f"{mnemonic} {rd}, {rs1}, {i}")
         else:
@@ -227,16 +231,6 @@ class Asm:
                     f"{mnemonic} {rt}, {rs2}, %lo({i})",
                 ]
             )
-
-    def emitPrelogue(self):
-        self.emit(["push ra", "push fp", "mv fp, sp"])
-
-    def emitEpilogue(self):
-        self.emit(["mv sp, fp", "pop fp", "pop ra"])
-
-    def emitRet(self):
-        self.emitEpilogue()
-        self.emit("ret")
 
     def addressOf(self, v: LValue):
         match v:
@@ -556,6 +550,15 @@ class Codegen(NodeVisitor):
     def save(self, o: io.StringIO):
         self._asm.save(o)
 
+    def loadNodeValue(
+        self,
+        node: c_ast.Node,
+        r1: str = "a0",
+        r2: str = "a1",
+    ):
+        v = self.getNodeValue(node)
+        self._asm.load(v, r1, r2)
+
     def visit_Decl(self, node: c_ast.Decl):
         if not node.name:
             return
@@ -648,3 +651,63 @@ class Codegen(NodeVisitor):
                     _gen(node.init, 0, True)
             case _:
                 unreachable()
+
+    def emitPrelogue(self):
+        self._asm.emit(["push ra", "push fp", "mv fp, sp"])
+        self._asm.emitFormatI("addi", "sp", "sp", -self._func._maxOffset)
+
+    def emitEpilogue(self):
+        self._asm.emit(["mv sp, fp", "pop fp", "pop ra"])
+
+    def emitRet(self):
+        self.emitEpilogue()
+        self._asm.emit("ret")
+
+    def visit_FuncDef(self, node: c_ast.FuncDef):
+        r = self.getNodeRecord(node)
+        self._func = r._func
+
+        name = self._func._name
+
+        sec = self._asm._secText
+        sec.addEmptyLine()
+
+        decl: c_ast.Decl = node.decl
+        if "static" in decl.storage:
+            sec.add(f".local ${name}")
+        else:
+            sec.add(f".global ${name}")
+
+        sec.add(f'.type ${name}, "function"')
+
+        sec.add(".align 2")
+        sec.addLabel(name)
+
+        self.visit(node.body)
+
+        sec.add(f".size ${name}, -($. ${name})")
+
+        self._func = None
+
+    def visit_Compound(self, node: c_ast.Compound):
+        r = self.getNodeRecord(node)
+        self._scope = r._scope
+
+        isFuncBody = isinstance(self.getParent(), c_ast.FuncDef)
+        if isFuncBody:
+            self.emitPrelogue()
+
+        block_items = node.block_items or []
+        for _ in block_items:
+            self.visit(_)
+
+        if isFuncBody:
+            if len(block_items) == 0 or not isinstance(block_items[-1], c_ast.Return):
+                self.emitRet()
+
+        self._scope = self._scope._prev
+
+    def visit_Return(self, node: c_ast.Return):
+        if node.expr:
+            self.loadNodeValue(node.expr)
+        self.emitRet()
