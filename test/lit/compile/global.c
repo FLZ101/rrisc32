@@ -35,8 +35,6 @@ Goo *pg1 = &g1;
 // CC-NEXT: .LS_2:
 // CC-NEXT:     .asciz "hello"
 // CC-NEXT: .LS_3:
-// CC-NEXT:     .asciz "b"
-// CC-NEXT: .LS_4:
 // CC-NEXT:     .asciz "c"
 // CC-NEXT:
 // CC-NEXT:     .data
@@ -108,7 +106,7 @@ Goo *pg1 = &g1;
 // CC-NEXT:     .dw 10
 // CC-NEXT:     .asciz "b"
 // CC-NEXT:     .fill 2
-// CC-NEXT:     .dw $.LS_4
+// CC-NEXT:     .dw $.LS_3
 // CC-NEXT:     .global $f1
 // CC-NEXT:     .type $f1, "object"
 // CC-NEXT:     .size $f1, -($. $f1)

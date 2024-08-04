@@ -114,6 +114,7 @@ def main():
     parser.add_argument(
         "--assemble", action="store_true", help="Compile and assemble, but do not link."
     )
+    parser.add_argument("--optimize", action="store_true", help="Enable optimizations.")
     parser.add_argument("-o", metavar="<outfile>")
     parser.add_argument("infiles", metavar="<infile>", nargs="+")
 

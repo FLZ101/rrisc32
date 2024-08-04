@@ -488,7 +488,7 @@ class Asm:
 
         # restore sp
         if n > 0:
-            self.emit(f"addi sp, sp, -${n}")
+            self.emit(f"addi sp, sp, {n}")
 
     """
     void *__builtin_memset(void *s, int c, size_t n) {
@@ -613,11 +613,10 @@ class Codegen(NodeVisitor):
                     if not _local:
                         sec.addConstant(self.getNodeValue(init))
                     else:
-                        self._asm.load(init)
-                        self._asm.store(MemoryAccess(StackFrameOffset(offset)))
+                        self.loadNodeValue(init)
+                        self._asm.store(MemoryAccess(StackFrameOffset(offset, PointerType(ty))))
 
-        v = self._scope.findSymbol(node.name)
-        ty = v.getType()
+        v, ty = self.getNodeValueType(node)
         match v:
             case Function() | ExternVariable():
                 pass
@@ -646,13 +645,15 @@ class Codegen(NodeVisitor):
 
             case LocalVariable():
                 if node.init:
-                    self._asm.emitBuiltinCall(
-                        "memset",
-                        self._asm.addressOf(v),  # s
-                        getIntConstant(0),  # c
-                        getIntConstant(ty.size(), "size_t"),  # n
-                    )
-                    _gen(node.init, 0, True)
+                    match ty:
+                        case ArrayType() | StructType():
+                            self._asm.emitBuiltinCall(
+                                "memset",
+                                self._asm.addressOf(v),  # s
+                                getIntConstant(0),  # c
+                                getIntConstant(ty.size(), "size_t"),  # n
+                            )
+                    _gen(node.init, v._offset, True)
             case _:
                 unreachable()
 
@@ -668,8 +669,7 @@ class Codegen(NodeVisitor):
         self._asm.emit("ret")
 
     def visit_FuncDef(self, node: c_ast.FuncDef):
-        r = self.getNodeRecord(node)
-        self._func = r._func
+        self._func = self.getNodeValue(node)
 
         name = self._func._name
 
@@ -695,7 +695,6 @@ class Codegen(NodeVisitor):
 
     def visit_Compound(self, node: c_ast.Compound):
         r = self.getNodeRecord(node)
-        self._scope = r._scope
 
         isFuncBody = isinstance(self.getParent(), c_ast.FuncDef)
         if isFuncBody:
@@ -708,8 +707,6 @@ class Codegen(NodeVisitor):
         if isFuncBody:
             if len(block_items) == 0 or not isinstance(block_items[-1], c_ast.Return):
                 self.emitRet()
-
-        self._scope = self._scope._prev
 
     def visit_Return(self, node: c_ast.Return):
         if node.expr:

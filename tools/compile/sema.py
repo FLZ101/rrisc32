@@ -355,7 +355,7 @@ class ExternVariable(Variable):
 class LocalVariable(Variable):
     def __init__(self, name: str, ty: Type, offset: int) -> None:
         super().__init__(name, ty)
-        self._offset = -offset
+        self._offset = offset
 
 
 class Argument(Variable):
@@ -662,9 +662,6 @@ class NodeRecord:
     def __init__(self, v: Value = None) -> None:
         self._value = v
 
-        self._scope: LocalScope = None
-        self._func: Function = None
-
 
 class NodeVisitorCtx:
     def __init__(self) -> None:
@@ -820,6 +817,7 @@ class Sema(NodeVisitor):
                 case GlobalVariable() | StaticVariable():
                     return Node(SymConstant(v2._label, t1))
                 case StrLiteral():
+                    self._ctx.addStr(v2)
                     return Node(SymConstant(v2._label, PointerType(t2._base)))
                 case _:
                     return c_ast.Cast(Node(Value(t1)), node)
@@ -885,7 +883,7 @@ class Sema(NodeVisitor):
 
         v, ty = self.getNodeValueType(node)
         if skipIfInt and isinstance(ty, IntType):
-            return v, Type
+            return v, ty
 
         nodeNew = self.tryConvert(pointerTy or PointerType(), node)
         if nodeNew:
@@ -1015,15 +1013,19 @@ class Sema(NodeVisitor):
         if not node.name:
             return
 
+        if isinstance(self.getParent(), c_ast.Struct):  # fields
+            return
+
+        def _addSymbol(v: Value):
+            self._scope.addSymbol(node.name, v)
+            self.setNodeValue(node, v)
+
         if isinstance(ty, FunctionType):
-            self._scope.addSymbol(node.name, Function(node.name, ty))
+            _addSymbol(Function(node.name, ty))
             return
 
         if "extern" in node.quals:
-            self._scope.addSymbol(node.name, ExternVariable(node.name, ty))
-            return
-
-        if isinstance(self.getParent(), c_ast.Struct):  # fields
+            _addSymbol(ExternVariable(node.name, ty))
             return
 
         if isinstance(self.getParent(), c_ast.FuncDecl):  # arguments
@@ -1094,27 +1096,25 @@ class Sema(NodeVisitor):
                 return init
 
         if _global or _static:  # global/static variables
-            if _global:
-                self._scope.addSymbol(node.name, GlobalVariable(node.name, ty, _static))
-            else:
-                self._scope.addSymbol(
-                    node.name,
-                    StaticVariable(node.name, ty, self._func.getStaticLabel(node.name)),
-                )
-
             if node.init:
                 node.init = _check(ty, node.init)
 
+            if _global:
+                _addSymbol(GlobalVariable(node.name, ty, _static))
+            else:
+                _addSymbol(StaticVariable(node.name, ty, self._func.getStaticLabel(node.name)))
+
         else:  # local variables
+            if node.init:
+                node.init = _check(ty, node.init)
+
             sz = align(ty.size(), 4)
             scope: LocalScope = self._scope
             scope._offset += sz
-            scope.addSymbol(node.name, LocalVariable(node.name, ty, scope._offset))
+
+            _addSymbol(LocalVariable(node.name, ty, -scope._offset))
 
             self._func.updateMaxOffset(scope._offset)
-
-            if node.init:
-                node.init = _check(ty, node.init)
 
     def visit_Constant(self, node: c_ast.Constant):
         s: str = node.value
@@ -1135,22 +1135,6 @@ class Sema(NodeVisitor):
                 s = unescapeStr(s[1:-1] + "\0")
                 sLit = StrLiteral(s, node.value, getBuiltinType("char"))
                 self.setNodeValue(node, sLit)
-
-                def _shouldAdd():
-                    # char s[] = "hello";
-                    p = self.getParent()
-                    if isinstance(p, c_ast.Decl) and isinstance(self.getNodeType(p), ArrayType):
-                        return False
-
-                    # sizeof("hello")
-                    if isinstance(p, c_ast.UnaryOp) and p.op == "sizeof":
-                        return False
-
-                    return True
-
-                if _shouldAdd():
-                    self._ctx.addStr(sLit)
-
                 return
 
             if "int" in node.type:
@@ -1191,14 +1175,12 @@ class Sema(NodeVisitor):
         self.visit(decl)
 
         self._func = self._scope.getFunction(decl.name)
-        self.enterScope()
-
-        r = self.getNodeRecord(node)
-        r._func = self._func
-        r._scope = self._scope
+        self.setNodeValue(node, self._func)
 
         funcType: FunctionType = self._func.getType()
         funcDecl: c_ast.FuncDecl = decl.type
+
+        self.enterScope()
 
         # declare arguments
         offset = 8
@@ -1259,9 +1241,6 @@ class Sema(NodeVisitor):
 
         if shouldEnter:
             self.enterScope()
-
-        r = self.getNodeRecord(node)
-        r._scope = self._scope
 
         block_items = node.block_items or []
         for _ in block_items:
