@@ -148,6 +148,10 @@ class Asm:
         self._secRodata.addLabel(sLit._label)
         self._secRodata.add(f".asciz {sLit._sOrig}")
 
+    def getLocalLabel(self, name: str, *, _i=[0]):
+        _i[0] += 1
+        return f".LL{_i[0]}.{name}"
+
     def emit(self, s: str | list[str]):
         self._secText.add(s)
 
