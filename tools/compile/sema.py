@@ -885,7 +885,7 @@ class Sema(NodeVisitor):
         if skipIfInt and isinstance(ty, IntType):
             return v, ty
 
-        nodeNew = self.tryConvert(pointerTy or PointerType(), node)
+        nodeNew = self.tryConvert(pointerTy or PointerType(None), node)
         if nodeNew:
             setattr(o, attr, nodeNew)
             v, ty = self.getNodeValueType(nodeNew)
@@ -1250,7 +1250,7 @@ class Sema(NodeVisitor):
             self.exitScope()
 
     def visit_ArrayRef(self, node: c_ast.ArrayRef):
-        arrTy: PointerType = self.getNodeType(self.convert(PointerType(), node.name))
+        arrTy: PointerType = self.getNodeType(self.convert(PointerType(None), node.name))
         subTy = self.getNodeType(node.subscript)
         match subTy:
             case IntType():
@@ -1696,9 +1696,9 @@ class Sema(NodeVisitor):
         match tyT, tyF:
             case PointerType(), PointerType() if isCompatible(tyT, tyF):
                 _f(tyT)
-            case PointerType(VoidType()), PointerType():
+            case PointerType(_base=VoidType()), PointerType():
                 _f(tyT)
-            case PointerType(), PointerType(VoidType()):
+            case PointerType(), PointerType(_base=VoidType()):
                 _f(tyF)
             case _:
                 raise CCError("incompatible operand types", tyT, tyF)
@@ -1716,7 +1716,7 @@ class Sema(NodeVisitor):
     def visit_FuncCall(self, node: c_ast.FuncCall):
         v, ty = self.tryConvertToPointer(node, "name")
         match ty:
-            case PointerType(FunctionType()):
+            case PointerType(_base=FunctionType()):
                 tyF: FunctionType = ty._base
                 args: list[c_ast.Node] = node.args.exprs
 
@@ -1732,7 +1732,7 @@ class Sema(NodeVisitor):
                     else:
                         self.visit(args[i])
 
-                self.setNodeTypeR(tyF._ret)
+                self.setNodeTypeR(node, tyF._ret)
             case _:
                 raise CCError("not a pointer to function")
 
