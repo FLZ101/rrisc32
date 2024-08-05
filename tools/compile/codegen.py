@@ -20,14 +20,7 @@ class MemoryAccess(LValue):
         ty = addr.getType()
         assert isinstance(ty, PointerType) and ty.toObject()
 
-        super().__init__(ty)
-
-        match self._type:
-            case IntType() | PointerType():
-                pass
-            case _:
-                unreachable()
-
+        super().__init__(ty._base)
         self._addr = addr
 
 
@@ -554,6 +547,28 @@ class Codegen(NodeVisitor):
     def save(self, o: io.StringIO):
         self._asm.save(o)
 
+    def getNodeValue(self, node: c_ast.Node) -> Value:
+        r = self.getNodeRecord(node)
+
+        def _shouldVisit():
+            if not r._value:
+                return True
+            # current value is just a Type wrapper
+            return type(r._value) in [
+                Value,
+                LValue,
+                RValue,
+            ]
+
+        if _shouldVisit():
+            self.visit(node)
+
+        assert not _shouldVisit()
+        return r._value
+
+    def getNodeType(self, node: c_ast.Node) -> Type:
+        return super().getNodeValue(node).getType()
+
     def loadNodeValue(
         self,
         node: c_ast.Node,
@@ -694,8 +709,6 @@ class Codegen(NodeVisitor):
         self._func = None
 
     def visit_Compound(self, node: c_ast.Compound):
-        r = self.getNodeRecord(node)
-
         isFuncBody = isinstance(self.getParent(), c_ast.FuncDef)
         if isFuncBody:
             self.emitPrelogue()
@@ -712,3 +725,104 @@ class Codegen(NodeVisitor):
         if node.expr:
             self.loadNodeValue(node.expr)
         self.emitRet()
+
+    def visit_Cast(self, node: c_ast.Cast):
+        t1 = self.getNodeType(node.to_type)
+        v2, t2 = self.getNodeValueType(node.expr)
+
+        match t1, t2:
+            # array to pointer conversion
+            case PointerType(), ArrayType():
+                match v2:
+                    case LocalVariable():  # p = arr
+                        self.setNodeValue(node, StackFrameOffset(v2._offset, t1))
+
+                    case MemoryAccess():  # p = *pArr
+                        self.setNodeValue(node, self._asm.addressOf(v2))
+
+                    case _:
+                        unreachable()
+
+            # function to pointer conversion
+            case PointerType(), FunctionType():
+                match v2:
+                    case MemoryAccess():  # p = *pFunc
+                        self.setNodeValue(node, self._asm.addressOf(v2))
+
+                    case _:
+                        unreachable()
+
+            # integer conversion
+            case IntType(), IntType():
+
+                def _getV():
+                    sz1 = t1.size()
+                    sz2 = t2.size()
+                    if sz1 == sz2:
+                        v2._type = t1
+                        return v2
+
+                    if sz1 > sz2:
+                        if sz1 < 8:
+                            v2._type = t1
+                            return v2
+                        self._asm.load(v2)
+                        self._asm.emit("srai a1, a0, 31")
+                        return TemporaryValue(t1)
+
+                    self._asm.load(v2)
+                    match sz1:
+                        case 4:
+                            pass
+                        case 2:
+                            if t1._unsigned:
+                                self._asm.emit("zext.h a0, a0")
+                            else:
+                                self._asm.emit("sext.h a0, a0")
+                        case 1:
+                            if t1._unsigned:
+                                self._asm.emit("zext.b a0, a0")
+                            else:
+                                self._asm.emit("sext.b a0, a0")
+                        case _:
+                            unreachable()
+                    return TemporaryValue(t1)
+
+                self.setNodeValue(node, _getV())
+
+            case PointerType(), PointerType():
+                v2._type = t1
+                self.setNodeValue(node, v2)
+
+            # Any integer can be cast to any pointer type.
+            case PointerType(), IntType():
+                if t2.size() >= 4:
+                    v2._type = t1
+                    self.setNodeValue(node, v2)
+                else:
+                    self._asm.load(v2)
+                    self.setNodeValue(node, TemporaryValue(t1))
+
+            # Any pointer type can be cast to any integer type.
+            case IntType(), PointerType():
+                if t1.size() == t2.size():
+                    v2._type = t1
+                    self.setNodeValue(node, v2)
+                else:
+                    node.expr = c_ast.Cast(Node(getBuiltinType("unsigned long")), node.expr)
+                    self.visit_Cast(node)
+
+            case _:
+                unreachable()
+
+    def visit_UnaryOp(self, node: c_ast.UnaryOp):
+        match node.op:
+            case "&":
+                pass
+
+            case '*':
+                v = self.getNodeValue(node.expr)
+                self.setNodeValue(node, MemoryAccess(v))
+
+            case _:
+                unreachable()

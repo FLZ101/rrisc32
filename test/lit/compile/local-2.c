@@ -18,9 +18,7 @@ void f(int i) {
     }
 }
 
-// CC:          .text
-// CC-NEXT:
-// CC-NEXT:     .global $f
+// CC:          .global $f
 // CC-NEXT:     .type $f, "function"
 // CC-NEXT:     .align 2
 // CC-NEXT: f:
@@ -53,13 +51,13 @@ void f(int i) {
 // CC-NEXT:     call $__builtin_memset
 // CC-NEXT:     addi sp, sp, 12
 // CC-NEXT:     li a0, 97
-// CC-NEXT:     sw fp, a0, -16
+// CC-NEXT:     sb fp, a0, -16
 // CC-NEXT:     li a0, 10
 // CC-NEXT:     sw fp, a0, -12
 // CC-NEXT:     li a0, 98
-// CC-NEXT:     sw fp, a0, -8
+// CC-NEXT:     sb fp, a0, -8
 // CC-NEXT:     li a0, 0
-// CC-NEXT:     sw fp, a0, -7
+// CC-NEXT:     sb fp, a0, -7
 // CC-NEXT:     li a0, $.LS_2
 // CC-NEXT:     sw fp, a0, -4
 // CC-NEXT:     mv sp, fp
@@ -73,3 +71,4 @@ void f(int i) {
 // CC-NEXT:     .asciz "hello"
 // CC-NEXT: .LS_2:
 // CC-NEXT:     .asciz "c"
+
