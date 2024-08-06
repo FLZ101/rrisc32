@@ -306,6 +306,10 @@ class Function(Value):
         _i[0] += 1
         return f"{self._name}.{name}.{_i[0]}"
 
+    def getTempVarName(self, *, _i=[0]):
+        _i[0] += 1
+        return f"tmp.{_i[0]}"
+
     def updateMaxOffset(self, offset: int):
         if offset > self._maxOffset:
             self._maxOffset = offset
@@ -550,7 +554,7 @@ def isCompatible(t1: Type, t2: Type):
             return False
         if len(t1._args) != len(t2._args):
             return False
-        for i in range(t1._args):
+        for i in range(len(t1._args)):
             at1 = t1._args[i]
             at2 = t2._args[i]
             if isCompatible(at1, at2):
@@ -609,7 +613,7 @@ def getArithmeticCommonType(t1: IntType, t2: IntType):
 
 
 class Node(c_ast.Node):
-    def __init__(self, v: Value) -> None:
+    def __init__(self, v: Value|Type) -> None:
         match v:
             case Constant() | Variable():
                 self._value = v
@@ -1307,6 +1311,20 @@ class Sema(NodeVisitor):
                         self.setNodeTypeR(node, tyL)
 
                     case "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=":
+                        match vL:
+                            case Variable():
+                                # convert "a += b" into "a = a + b"
+                                pass
+                            case _:
+                                # convert "a += b" into "p = &a; *p = *p + b"
+                                node.lvalue = c_ast.UnaryOp(
+                                    "*",
+                                    c_ast.Decl(
+                                        self._func.getTempVarName(),
+                                        type=Node(Value(PointerType(tyL))),
+                                        init=c_ast.UnaryOp("&", node.lvalue),
+                                    ),
+                                )
                         node.rvalue = c_ast.BinaryOp(node.op[:-1], node.lvalue, node.rvalue)
                         node.op = "="
                         self.visit_Assignment(node)
@@ -1714,7 +1732,7 @@ class Sema(NodeVisitor):
         raise CCNotImplemented("alignas")
 
     def visit_FuncCall(self, node: c_ast.FuncCall):
-        v, ty = self.tryConvertToPointer(node, "name")
+        _, ty = self.tryConvertToPointer(node, "name")
         match ty:
             case PointerType(_base=FunctionType()):
                 tyF: FunctionType = ty._base

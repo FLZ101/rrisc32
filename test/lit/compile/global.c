@@ -27,17 +27,15 @@ Goo g1 = {'a'};
 
 Goo *pg1 = &g1;
 
-// CC:          .text
-// CC-NEXT:
-// CC-NEXT:     .rodata
+// CC:          .rodata
 // CC-NEXT: .LS_1:
 // CC-NEXT:     .asciz ""
 // CC-NEXT: .LS_2:
 // CC-NEXT:     .asciz "hello"
 // CC-NEXT: .LS_3:
 // CC-NEXT:     .asciz "c"
-// CC-NEXT:
-// CC-NEXT:     .data
+
+// CC:          .data
 // CC-NEXT:
 // CC-NEXT:     .align 2
 // CC-NEXT: i2:
@@ -125,8 +123,8 @@ Goo *pg1 = &g1;
 // CC-NEXT:     .global $pg1
 // CC-NEXT:     .type $pg1, "object"
 // CC-NEXT:     .size $pg1, -($. $pg1)
-// CC-NEXT:
-// CC-NEXT:     .bss
+
+// CC:          .bss
 // CC-NEXT:
 // CC-NEXT:     .align 2
 // CC-NEXT: i1:

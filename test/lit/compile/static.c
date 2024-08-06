@@ -32,9 +32,8 @@ int f() {
 // CC-NEXT:     ret
 // CC-NEXT:     .size $f, -($. $f)
 // CC-NEXT:
-// CC-NEXT:     .rodata
-// CC-NEXT:
-// CC-NEXT:     .data
+
+// CC:          .data
 // CC-NEXT:
 // CC-NEXT:     .align 2
 // CC-NEXT: f.j.2:
@@ -49,8 +48,8 @@ int f() {
 // CC-NEXT:     .local $f.i.3
 // CC-NEXT:     .type $f.i.3, "object"
 // CC-NEXT:     .size $f.i.3, -($. $f.i.3)
-// CC-NEXT:
-// CC-NEXT:     .bss
+
+// CC:          .bss
 // CC-NEXT:
 // CC-NEXT:     .align 2
 // CC-NEXT: f.i.1:

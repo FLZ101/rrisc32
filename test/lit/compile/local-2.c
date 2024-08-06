@@ -65,10 +65,9 @@ void f(int i) {
 // CC-NEXT:     pop ra
 // CC-NEXT:     ret
 // CC-NEXT:     .size $f, -($. $f)
-// CC-NEXT:
-// CC-NEXT:     .rodata
+
+// CC:          .rodata
 // CC-NEXT: .LS_1:
 // CC-NEXT:     .asciz "hello"
 // CC-NEXT: .LS_2:
 // CC-NEXT:     .asciz "c"
-

@@ -56,9 +56,8 @@ void g(int a, int b) {
 // CC-NEXT:     ret
 // CC-NEXT:     .size $g, -($. $g)
 // CC-NEXT:
-// CC-NEXT:     .rodata
-// CC-NEXT:
-// CC-NEXT:     .data
+
+// CC:          .data
 // CC-NEXT:
 // CC-NEXT:     .align 2
 // CC-NEXT: i1:
@@ -103,8 +102,8 @@ void g(int a, int b) {
 // CC-NEXT:     .global $i5
 // CC-NEXT:     .type $i5, "object"
 // CC-NEXT:     .size $i5, -($. $i5)
-// CC-NEXT:
-// CC-NEXT:     .bss
+
+// CC:          .bss
 // CC-NEXT:
 // CC-NEXT:     .align 2
 // CC-NEXT: f1:

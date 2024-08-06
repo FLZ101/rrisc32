@@ -18,7 +18,7 @@ class StackFrameOffset(Constant):
 class MemoryAccess(LValue):
     def __init__(self, addr: Value) -> None:
         ty = addr.getType()
-        assert isinstance(ty, PointerType) and ty.toObject()
+        assert isinstance(ty, PointerType)
 
         super().__init__(ty._base)
         self._addr = addr
@@ -129,7 +129,9 @@ class Section:
 
 
 class Asm:
-    def __init__(self) -> None:
+    def __init__(self, cg: "Codegen") -> None:
+        self._cg = cg
+
         self._secText = Section(".text")
         self._secRodata = Section(".rodata")
         self._secData = Section(".data")
@@ -247,13 +249,28 @@ class Asm:
             case _:
                 unreachable()
 
-    def load(self, v: Value, r1: str = "a0", r2: str = "a1"):
+    def getNodeValue(self, v: Value | c_ast.Node):
+        match v:
+            case c_ast.Node() as node:
+                return self._cg.getNodeValue(node)
+            case Value():
+                return v
+            case _:
+                unreachable()
+
+    def load(self, v: Value | c_ast.Node, r1: str = "a0", r2: str = "a1"):
+        v = self.getNodeValue(v)
         match v:
             case IntConstant() | PtrConstant():
                 sz = v._type.size()
                 i = v._i
                 if sz == 8:
-                    self.emit([f"li {r2}, {i >> 32}", f"li {r1}, {i & 0xffffffff}"])
+                    self.emit(
+                        [
+                            f"li {r2}, {hex((i >> 32) & 0xffffffff)}",
+                            f"li {r1}, {hex(i & 0xffffffff)}",
+                        ]
+                    )
                 else:
                     self.emit(f"li {r1}, {i}")
 
@@ -454,7 +471,8 @@ class Asm:
                     case _:
                         pass
 
-    def push(self, v: Value):
+    def push(self, v: Value | c_ast.Node):
+        v = self.getNodeValue(v)
         self.load(v)
         if v.getType().size() == 8:
             self.emit("push a1")
@@ -465,15 +483,16 @@ class Asm:
         if ty.size() == 8:
             self.emit(f"pop {r2}")
 
-    def emitBuiltinCall(self, name: str, *args: Value):
+    def emitBuiltinCall(self, name: str, *args: Value | c_ast.Node):
         assert name in self._builtins
         self._builtins[name] += 1
         self.emitCall(f"__builtin_{name}", *args)
 
-    def emitCall(self, name: str, *args: Value):
+    def emitCall(self, name: str, *args: Value | c_ast.Node):
         n = 0
         # push arguments
         for arg in reversed(args):
+            arg = self.getNodeValue(arg)
             self.push(arg)
             n += align(arg.getType().size(), 4)
 
@@ -522,13 +541,59 @@ class Asm:
         )
         sec.add(f".size ${name}, -($. ${name})")
 
-    def emitBuiltins(self):
+    """
+    char *memcpy(char *dest, char *src, unsigned int n) {
+        char *end = src + n;
+        while (src < end) {
+            *(dest++) = *(src++);
+        }
+        return dest;
+    }
+    """
+
+    def _emitBuiltinMemcpy(self):
+        name = "__builtin_memset"
+        sec = self._secText
+
+        sec.add(f".local ${name}")
+        sec.add(f'.type ${name}, "function"')
+        sec.add(".align 2")
+        sec.addLabel(f"{name}")
+
+        # load arguments
+        self.load(Argument("dest", PointerType(getBuiltinType("void")), 8), "a0")
+        self.load(Argument("src", PointerType(getBuiltinType("void")), 12), "a1")
+        self.load(Argument("n", getBuiltinType("size_t"), 16), "a2")
+
+        sec.addRaw(
+            """
+                blez    a2, $2f
+                add     a3, a1, a2
+        1:
+                lbu     a4, a1, 0
+                addi    a5, a1, 1
+                addi    a2, a0, 1
+                sb      a0, a4, 0
+                mv      a0, a2
+                mv      a1, a5
+                bltu    a5, a3, $1b
+                mv      a0, a2
+                ret
+        2:
+                ret
+            """
+        )
+        sec.add(f".size ${name}, -($. ${name})")
+
+    def _emitBuiltins(self):
         for name, n in self._builtins.items():
             if n > 0:
                 _f = getattr(self, f"_emitBuiltin{name.capitalize()}")
                 _f()
 
     def save(self, o: io.StringIO):
+        self._emitBuiltins()
+
         self._secText.save(o)
         self._secRodata.save(o)
         self._secData.save(o)
@@ -539,7 +604,7 @@ class Codegen(NodeVisitor):
     def __init__(self, ctx: NodeVisitorCtx) -> None:
         super().__init__(ctx)
 
-        self._asm = Asm()
+        self._asm = Asm(self)
 
         for sLit in ctx._strPool.values():
             self._asm.addStr(sLit)
@@ -568,15 +633,6 @@ class Codegen(NodeVisitor):
 
     def getNodeType(self, node: c_ast.Node) -> Type:
         return super().getNodeValue(node).getType()
-
-    def loadNodeValue(
-        self,
-        node: c_ast.Node,
-        r1: str = "a0",
-        r2: str = "a1",
-    ):
-        v = self.getNodeValue(node)
-        self._asm.load(v, r1, r2)
 
     def visit_Decl(self, node: c_ast.Decl):
         if not node.name:
@@ -628,7 +684,7 @@ class Codegen(NodeVisitor):
                     if not _local:
                         sec.addConstant(self.getNodeValue(init))
                     else:
-                        self.loadNodeValue(init)
+                        self._asm.load(init)
                         self._asm.store(MemoryAccess(StackFrameOffset(offset, PointerType(ty))))
 
         v, ty = self.getNodeValueType(node)
@@ -723,7 +779,7 @@ class Codegen(NodeVisitor):
 
     def visit_Return(self, node: c_ast.Return):
         if node.expr:
-            self.loadNodeValue(node.expr)
+            self._asm.load(node.expr)
         self.emitRet()
 
     def visit_Cast(self, node: c_ast.Cast):
@@ -816,13 +872,88 @@ class Codegen(NodeVisitor):
                 unreachable()
 
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
+        v = self.getNodeValue(node.expr)
         match node.op:
             case "&":
-                pass
+                self.setNodeValue(node, self._asm.addressOf(v))
 
-            case '*':
-                v = self.getNodeValue(node.expr)
+            case "*":
                 self.setNodeValue(node, MemoryAccess(v))
 
+            case "+" | "-" | "~":
+                pass
+
+            case "!":
+                pass
+
+            case "++" | "--" | "p++" | "p--":
+                pass
+
+            case _:
+                unreachable()
+
+    def visit_BinaryOp(self, node: c_ast.BinaryOp):
+        ty = self.getNodeType(node)
+        tyL = self.getNodeType(node.left)
+        tyR = self.getNodeType(node.right)
+
+        assert ty.size() == tyL.size() == tyR.size()
+        sz = ty.size()
+
+        self._asm.push(node.right)
+        self._asm.load(node.left)
+        self._asm.pop(tyR, "a2", "a3")
+
+        match node.op:
+            case "+":
+                if sz == 8:
+                    self._asm.emit(
+                        [
+                            "add     a0, a0, a2",
+                            "sltu    a2, a0, a2",
+                            "add     a1, a1, a3",
+                            "add     a1, a1, a2",
+                        ]
+                    )
+                else:
+                    self._asm.emit("add a0, a0, a2")
+            case "-":
+                pass
+            case "*" | "/" | "%" | "&" | "|" | "^":
+                pass
+            case "<<" | ">>":
+                pass
+            case "&&" | "||":
+                pass
+            case "==" | "!=":
+                pass
+            case "<" | "<=" | ">" | ">=":
+                pass
+            case _:
+                unreachable()
+
+        self.setNodeValue(TemporaryValue(ty))
+
+    def visit_Assignment(self, node: c_ast.Assignment):
+        tyL = self.getNodeType(node.lvalue)
+        match node.op:
+            case "=":
+                match tyL:
+                    case StructType():
+                        self._asm.emitBuiltinCall(
+                            "memcpy",
+                            c_ast.UnaryOp("&", node.lvalue),
+                            c_ast.UnaryOp("&", node.rvalue),
+                            getIntConstant(tyL.size(), getBuiltinType("size_t")),
+                        )
+
+                    case IntType() | PointerType():
+                        self._asm.push(node.rvalue)
+                        vL = self.getNodeValue(node.lvalue)
+                        self._asm.pop(tyL, "a2", "a3")
+                        self._asm.store(vL, "a2", "a3")
+
+                    case _:
+                        unreachable()
             case _:
                 unreachable()
