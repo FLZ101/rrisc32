@@ -515,6 +515,7 @@ class Asm:
         name = "__builtin_memset"
         sec = self._secText
 
+        sec.addEmptyLine()
         sec.add(f".local ${name}")
         sec.add(f'.type ${name}, "function"')
         sec.add(".align 2")
@@ -555,6 +556,7 @@ class Asm:
         name = "__builtin_memcpy"
         sec = self._secText
 
+        sec.addEmptyLine()
         sec.add(f".local ${name}")
         sec.add(f'.type ${name}, "function"')
         sec.add(".align 2")
@@ -613,6 +615,9 @@ class Codegen(NodeVisitor):
         self._asm.save(o)
 
     def getNodeValue(self, node: c_ast.Node) -> Value:
+        if isinstance(node, Node):
+            return node._value
+
         r = self.getNodeRecord(node)
 
         def _shouldVisit():
@@ -667,6 +672,16 @@ class Codegen(NodeVisitor):
                                     _gen(Node(IntConstant(ord(c), ty._base)), offset + i, _local)
 
                 case StructType():
+                    if not isinstance(init, c_ast.InitList):
+                        tyR = self.getNodeType(init)
+                        self._asm.emitBuiltinCall(
+                            "memcpy",
+                            StackFrameOffset(offset, PointerType(ty)),
+                            c_ast.UnaryOp("&", init),
+                            getIntConstant(tyR.size(), "size_t"),
+                        )
+                        return
+
                     n = len(init.exprs)
                     for i in range(n):
                         field = ty._fields[i]
@@ -718,12 +733,13 @@ class Codegen(NodeVisitor):
                 if node.init:
                     match ty:
                         case ArrayType() | StructType():
-                            self._asm.emitBuiltinCall(
-                                "memset",
-                                self._asm.addressOf(v),  # s
-                                getIntConstant(0),  # c
-                                getIntConstant(ty.size(), "size_t"),  # n
-                            )
+                            if isinstance(node.init, c_ast.InitList):
+                                self._asm.emitBuiltinCall(
+                                    "memset",
+                                    self._asm.addressOf(v),  # s
+                                    getIntConstant(0),  # c
+                                    getIntConstant(ty.size(), "size_t"),  # n
+                                )
                     _gen(node.init, v._offset, True)
             case _:
                 unreachable()
@@ -942,7 +958,7 @@ class Codegen(NodeVisitor):
                             "memcpy",
                             c_ast.UnaryOp("&", node.lvalue),
                             c_ast.UnaryOp("&", node.rvalue),
-                            getIntConstant(tyL.size(), getBuiltinType("size_t")),
+                            getIntConstant(tyL.size(), "size_t"),
                         )
 
                     case IntType() | PointerType():

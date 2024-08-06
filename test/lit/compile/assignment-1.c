@@ -90,3 +90,12 @@ void f() {
   // CC-NEXT:     ret
   // CC-NEXT:     .size $f, -($. $f)
 }
+
+// CC:          .bss
+// CC-NEXT:
+// CC-NEXT:     .align 2
+// CC-NEXT: ll:
+// CC-NEXT:     .fill 8
+// CC-NEXT:     .global $ll
+// CC-NEXT:     .type $ll, "object"
+// CC-NEXT:     .size $ll, -($. $ll)

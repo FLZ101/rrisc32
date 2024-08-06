@@ -613,7 +613,7 @@ def getArithmeticCommonType(t1: IntType, t2: IntType):
 
 
 class Node(c_ast.Node):
-    def __init__(self, v: Value|Type) -> None:
+    def __init__(self, v: Value | Type) -> None:
         match v:
             case Constant() | Variable():
                 self._value = v
@@ -725,8 +725,7 @@ class NodeVisitor(c_ast.NodeVisitor):
             sys.exit(1)
 
     def getNodeRecord(self, node: c_ast.Node) -> NodeRecord | Node:
-        if isinstance(node, Node):
-            return node
+        assert not isinstance(node, Node)
 
         if node not in self._records:
             self._records[node] = NodeRecord()
@@ -737,6 +736,9 @@ class NodeVisitor(c_ast.NodeVisitor):
         r._value = v
 
     def getNodeValue(self, node: c_ast.Node) -> Value:
+        if isinstance(node, Node):
+            return node._value
+
         r = self.getNodeRecord(node)
         if r._value is None:
             self.visit(node)
@@ -1077,7 +1079,12 @@ class Sema(NodeVisitor):
 
             elif isinstance(ty, StructType):
                 if not isinstance(init, c_ast.InitList):
+                    vR, tyR = self.getNodeValueType(init)
+                    if isCompatible(ty, tyR) and isinstance(vR, LValue):
+                        return init
+
                     raise CCError("invalid initializer")
+
                 self.setNodeType(init, ty)
 
                 ty.checkComplete()
