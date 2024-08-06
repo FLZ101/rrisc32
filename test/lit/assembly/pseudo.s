@@ -51,6 +51,8 @@ long_long_ago:
   pop
   pop x1
 
+  li x1, 0xffffffff
+
   .rodata
   .asciz ":-)"
   .align 10
@@ -105,10 +107,11 @@ far_away:
 # TEXT-NEXT: 000004ac  addi x2, x2, 4
 # TEXT-NEXT: 000004b0  lw x1, x2, 0
 # TEXT-NEXT: 000004b4  addi x2, x2, 4
+# TEXT-NEXT: 000004b8  addi x1, x0, -1
 
 # SEC:      Idx     Addr    Off     Size    Link    Info    AddrAli EntSize Flags   Type    Name
 # SEC-NEXT: 01      00      34      4c      00      00      01      00              STRTAB  .shstrtab
-# SEC-NEXT: 02      00      0400    04b8    00      00      0400    00      AE      PROGBIT .text
+# SEC-NEXT: 02      00      0400    04bc    00      00      0400    00      AE      PROGBIT .text
 # SEC-NEXT: 03      00      0c00    0404    00      00      0400    00      A       PROGBIT .rodata
 # SEC-NEXT: 04      00      1004    00      00      00      04      00      AW      PROGBIT .data
 # SEC-NEXT: 05      00      1004    00      00      00      04      00      AW      NOBITS  .bss
@@ -119,7 +122,7 @@ far_away:
 
 # SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
 # SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
-# SYM-NEXT: 06      01      00      04b8    LOCAL   SECTION DEF     02      .text
+# SYM-NEXT: 06      01      00      04bc    LOCAL   SECTION DEF     02      .text
 # SYM-NEXT: 06      02      00      0404    LOCAL   SECTION DEF     03      .rodata
 # SYM-NEXT: 06      03      00      00      LOCAL   SECTION DEF     04      .data
 # SYM-NEXT: 06      04      00      00      LOCAL   SECTION DEF     05      .bss

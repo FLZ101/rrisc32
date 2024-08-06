@@ -1,4 +1,5 @@
-build/
-.vscode/
+/build/
+/.vscode/
 *.o
 __pycache__/
+/.cache/

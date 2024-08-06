@@ -43,7 +43,7 @@ std::string trim(const std::string &s) {
 
 s64 parseInt(const std::string &str, bool hex) {
   if (str.starts_with("-"))
-    return -parseInt(substr(str, 1), hex);
+    return static_cast<s32>(-parseInt(substr(str, 1), hex));
 
   if (str.starts_with("0x"))
     return parseInt(substr(str, 2), true);
@@ -62,7 +62,7 @@ s64 parseInt(const std::string &str, bool hex) {
       i += c - '0';
     }
   }
-  return i;
+  return static_cast<s32>(i);
 }
 
 std::string escape(char c, bool wrap) { return escape(toString(c), wrap); }
@@ -168,7 +168,7 @@ std::vector<std::string> split(const std::string &s, const std::string &sep) {
 
 bool log2(u64 x, u8 &y) {
   y = 0;
-  if(!x)
+  if (!x)
     return true;
 
   while (!(x & 1)) {

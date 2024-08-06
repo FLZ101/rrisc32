@@ -552,7 +552,7 @@ class Asm:
     """
 
     def _emitBuiltinMemcpy(self):
-        name = "__builtin_memset"
+        name = "__builtin_memcpy"
         sec = self._secText
 
         sec.add(f".local ${name}")
@@ -819,11 +819,9 @@ class Codegen(NodeVisitor):
                         return v2
 
                     if sz1 > sz2:
-                        if sz1 < 8:
-                            v2._type = t1
-                            return v2
                         self._asm.load(v2)
-                        self._asm.emit("srai a1, a0, 31")
+                        if sz1 == 8:
+                            self._asm.emit("srai a1, a0, 31")
                         return TemporaryValue(t1)
 
                     self._asm.load(v2)
@@ -932,7 +930,7 @@ class Codegen(NodeVisitor):
             case _:
                 unreachable()
 
-        self.setNodeValue(TemporaryValue(ty))
+        self.setNodeValue(node, TemporaryValue(ty))
 
     def visit_Assignment(self, node: c_ast.Assignment):
         tyL = self.getNodeType(node.lvalue)

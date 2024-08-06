@@ -800,6 +800,9 @@ class Sema(NodeVisitor):
             v2._type = t1
             return node
 
+        res = c_ast.Cast(Node(Value(t1)), node)
+        self.setNodeTypeR(res, t1)
+
         # array to pointer conversion
         """
         int arr[] = {1, 2, 3};
@@ -824,7 +827,7 @@ class Sema(NodeVisitor):
                     self._ctx.addStr(v2)
                     return Node(SymConstant(v2._label, PointerType(t2._base)))
                 case _:
-                    return c_ast.Cast(Node(Value(t1)), node)
+                    return res
 
         # function to pointer conversion
         if (
@@ -834,13 +837,13 @@ class Sema(NodeVisitor):
         ):
             if isinstance(v2, Function):
                 return Node(SymConstant(v2._name, t1))
-            return c_ast.Cast(Node(Value(t1)), node)
+            return res
 
         # integer conversion
         if isinstance(t1, IntType) and isinstance(t2, IntType):
             if isinstance(v2, IntConstant):
                 return Node(IntConstant(v2._i, t1))
-            return c_ast.Cast(Node(Value(t1)), node)
+            return res
 
         # pointer conversion
 
@@ -856,7 +859,7 @@ class Sema(NodeVisitor):
                 case SymConstant():
                     return Node(SymConstant(v2._name, t1))
                 case _:
-                    return c_ast.Cast(Node(Value(t1)), node)
+                    return res
 
         # any integer constant expression with value ​0​ as well as
         # integer pointer expression with value zero cast to the type void*
