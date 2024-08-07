@@ -306,6 +306,16 @@ class Asm:
                 sz = ty.size()
                 addr = v._addr
                 match addr:
+                    case (
+                        GlobalVariable()
+                        | StaticVariable()
+                        | ExternVariable()
+                        | LocalVariable()
+                        | Argument()
+                    ):
+                        self.load(addr)
+                        self.load(MemoryAccess(TemporaryValue(ty)), r1, r2)
+
                     case SymConstant():  # global/static variables
                         _name = addr._name
                         _offset = addr._offset
@@ -399,6 +409,16 @@ class Asm:
                 sz = ty.size()
                 addr = v._addr
                 match addr:
+                    case (
+                        GlobalVariable()
+                        | StaticVariable()
+                        | ExternVariable()
+                        | LocalVariable()
+                        | Argument()
+                    ):
+                        self.load(addr)
+                        self.store(MemoryAccess(TemporaryValue(ty)), r1, r2)
+
                     case SymConstant():  # global/static variables
                         _name = addr._name
                         _offset = addr._offset
@@ -421,8 +441,8 @@ class Asm:
                         _offset = addr._i
                         match sz:
                             case 8:
-                                self.emitFormatS("sw", r1, "fp", _offset)
                                 self.emitFormatS("sw", r2, "fp", _offset + 4)
+                                self.emitFormatS("sw", r1, "fp", _offset)
                             case 4:
                                 self.emitFormatS("sw", r1, "fp", _offset)
                             case 2:
@@ -469,7 +489,7 @@ class Asm:
                                 unreachable()
 
                     case _:
-                        pass
+                        unreachable()
 
     def push(self, v: Value | c_ast.Node):
         v = self.getNodeValue(v)
@@ -755,6 +775,9 @@ class Codegen(NodeVisitor):
         self.emitEpilogue()
         self._asm.emit("ret")
 
+    def translate(self, node: c_ast.Node):
+        self.setNodeTranslated(node, self.getNodeTranslated(node))
+
     def visit_FuncDef(self, node: c_ast.FuncDef):
         self._func = self.getNodeValue(node)
 
@@ -912,7 +935,6 @@ class Codegen(NodeVisitor):
         tyR = self.getNodeType(node.right)
 
         assert ty.size() == tyL.size() == tyR.size()
-        sz = ty.size()
 
         self._asm.push(node.right)
         self._asm.load(node.left)
@@ -920,7 +942,7 @@ class Codegen(NodeVisitor):
 
         match node.op:
             case "+":
-                if sz == 8:
+                if ty.size() == 8:
                     self._asm.emit(
                         [
                             "add     a0, a0, a2",
@@ -930,6 +952,14 @@ class Codegen(NodeVisitor):
                         ]
                     )
                 else:
+                    if isinstance(tyL, PointerType):  # p + i
+                        sz = tyL._base.size()
+                        if sz > 1:
+                            self._asm.emitFormatI("slli", "a2", "a2", log2(sz))
+                    elif isinstance(tyR, PointerType):  # i + p
+                        sz = tyR._base.size()
+                        if sz > 1:
+                            self._asm.emitFormatI("slli", "a0", "a0", log2(sz))
                     self._asm.emit("add a0, a0, a2")
             case "-":
                 pass
@@ -971,3 +1001,9 @@ class Codegen(NodeVisitor):
                         unreachable()
             case _:
                 unreachable()
+
+    def visit_ArrayRef(self, node: c_ast.ArrayRef):
+        self.translate(node)
+
+    def visit_StructRef(self, node: c_ast.StructRef):
+        pass

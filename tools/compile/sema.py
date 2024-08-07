@@ -663,8 +663,11 @@ def unescapeStr(s: str) -> str:
 
 
 class NodeRecord:
+    __slots__ = ("_value", "_translated")
+
     def __init__(self, v: Value = None) -> None:
         self._value = v
+        self._translated: c_ast.Node = None
 
 
 class NodeVisitorCtx:
@@ -773,6 +776,15 @@ class NodeVisitor(c_ast.NodeVisitor):
         if not isinstance(v, StrLiteral):
             raise CCError("not a string literal")
         return v
+
+    def setNodeTranslated(self, node: c_ast.Node, translated: c_ast.Node):
+        r = self.getNodeRecord(node)
+        r._translated = translated
+        r._value = self.getNodeValue(translated)
+
+    def getNodeTranslated(self, node: c_ast.Node) -> c_ast.Node:
+        r = self.getNodeRecord(node)
+        return r._translated
 
 
 class Sema(NodeVisitor):
@@ -1264,13 +1276,17 @@ class Sema(NodeVisitor):
             self.exitScope()
 
     def visit_ArrayRef(self, node: c_ast.ArrayRef):
-        arrTy: PointerType = self.getNodeType(self.convert(PointerType(None), node.name))
+        _, arrTy = self.tryConvertToPointer(node, "name")
         subTy = self.getNodeType(node.subscript)
-        match subTy:
-            case IntType():
-                self.setNodeTypeL(node, arrTy._base)
+        match arrTy, subTy:
+            case PointerType(), IntType():
+                # translate arr[i] to *(arr + i)
+                self.setNodeTranslated(
+                    node, c_ast.UnaryOp("*", c_ast.BinaryOp("+", node.name, node.subscript))
+                )
+                assert isCompatible(arrTy._base, self.getNodeType(node))
             case _:
-                raise CCError("not an integer")
+                raise CCError("array subscript expression")
 
     def visit_StructRef(self, node: c_ast.StructRef):
         v, ty = self.getNodeValueType(node.name)
@@ -1280,18 +1296,35 @@ class Sema(NodeVisitor):
                     case StructType():
                         checkLValue(v)
                         field = ty.getField(node.field.name)
-                        self.setNodeTypeL(node, field._type)
+                        # translate foo.x to *(__type(x)*)((void *)&foo + __offset(x))
+                        addr = c_ast.UnaryOp("&", node.name)
                     case _:
                         raise CCError("not a struct")
             case "->":
                 match ty:
                     case PointerType(StructType()):
                         field = ty._base.getField(node.field.name)
-                        self.setNodeTypeL(node, field._type)
+                        # translate foo->x to *(__type(x)*)((void *)foo + __offset(x))
+                        addr = node.name
                     case _:
                         raise CCError("not a pointer to struct")
             case _:
                 unreachable()
+
+        self.setNodeTranslated(
+            node,
+            c_ast.UnaryOp(
+                "*",
+                c_ast.Cast(
+                    Node(Value(PointerType(field._type))),
+                    c_ast.BinaryOp(
+                        "+",
+                        c_ast.Cast(PointerType(getBuiltinType("void")), addr),
+                        Node(getIntConstant(field._offset)),
+                    ),
+                ),
+            ),
+        )
 
     # https://en.cppreference.com/w/c/language/operator_assignment
     def visit_Assignment(self, node: c_ast.Assignment):
@@ -1331,8 +1364,13 @@ class Sema(NodeVisitor):
                                     "*",
                                     c_ast.Decl(
                                         self._func.getTempVarName(),
-                                        type=Node(Value(PointerType(tyL))),
-                                        init=c_ast.UnaryOp("&", node.lvalue),
+                                        [],
+                                        [],
+                                        [],
+                                        [],
+                                        Node(Value(PointerType(tyL))),
+                                        c_ast.UnaryOp("&", node.lvalue),
+                                        None,
                                     ),
                                 )
                         node.rvalue = c_ast.BinaryOp(node.op[:-1], node.lvalue, node.rvalue)
@@ -1361,13 +1399,13 @@ class Sema(NodeVisitor):
                         case Function():
                             self.setNodeValue(node, SymConstant(v._name, PointerType(ty)))
                         case _:
-                            self.setNodeTypeR(PointerType(ty))
+                            self.setNodeTypeR(node, PointerType(ty))
                 else:
                     match v:
                         case GlobalVariable() | StaticVariable():
                             self.setNodeValue(node, SymConstant(v._label, PointerType(ty)))
                         case LValue():
-                            self.setNodeTypeR(PointerType(ty))
+                            self.setNodeTypeR(node, PointerType(ty))
                         case _:
                             raise CCError(f"can not take address of rvalue")
 
