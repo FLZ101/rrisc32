@@ -35,6 +35,9 @@ class Type(ABC):
     def name(self) -> str:
         return getattr(self, "_name", "")
 
+    def isVoid(self):
+        return self.name() == "void"
+
     def isComplete(self) -> bool:
         return hasattr(self, "_size")
 
@@ -670,6 +673,7 @@ class NodeRecord:
         self._translated: c_ast.Node = None
         self._visited = False
 
+
 class NodeVisitorCtx:
     def __init__(self) -> None:
         self.records: dict[c_ast.Node, NodeRecord] = {}
@@ -725,7 +729,7 @@ class NodeVisitor(c_ast.NodeVisitor):
             print("%s : %s" % (formatNode(self._path[-1]), ex))
             for i, _ in enumerate(reversed(self._path[1:-1])):
                 print("%s%s" % ("  " * (i + 1), formatNode(_)))
-            sys.exit(1)
+            raise
 
     def getNodeRecord(self, node: c_ast.Node) -> NodeRecord | Node:
         assert not isinstance(node, Node)
@@ -1184,9 +1188,6 @@ class Sema(NodeVisitor):
             raise CCError("invalid literal", str(ex))
 
     def visit_ID(self, node: c_ast.ID):
-        # foo.x
-        assert not isinstance(self.getParent(), c_ast.StructRef)
-
         _ = self._scope.getSymbol(node.name)
         if isinstance(_, Type):
             self.setNodeType(node, _)
@@ -1319,7 +1320,7 @@ class Sema(NodeVisitor):
                     Node(Value(PointerType(field._type))),
                     c_ast.BinaryOp(
                         "+",
-                        c_ast.Cast(PointerType(getBuiltinType("void")), addr),
+                        c_ast.Cast(Node(Value(PointerType(getBuiltinType("void")))), addr),
                         Node(getIntConstant(field._offset)),
                     ),
                 ),
@@ -1342,9 +1343,33 @@ class Sema(NodeVisitor):
                 if node.op != "=":
                     raise CCError(f"can not {node.op} a struct")
 
-                tyR = self.getNodeType(node.rvalue)
+                vR, tyR = self.getNodeValueType(node.rvalue)
+                checkLValue(vR)  # struct rvalue is not supported
                 if not isCompatible(tyL, tyR):
                     raise CCError(f"can not assign {tyL} {tyR}")
+
+                if (
+                    isinstance(node.rvalue, c_ast.UnaryOp)
+                    and node.rvalue.op == "*"
+                    and isinstance(vR, Variable)
+                ):
+                    pass
+                else:
+                    # translate 'foo1 = foo2' to 'p2 = &foo2; foo1 = *p2'
+                    node.rvalue = c_ast.UnaryOp(
+                        "*",
+                        c_ast.Decl(
+                            self._func.getTempVarName(),
+                            [],
+                            [],
+                            [],
+                            [],
+                            Node(Value(PointerType(tyR))),
+                            c_ast.UnaryOp("&", node.rvalue),
+                            None,
+                        ),
+                    )
+                    vR, tyR = self.getNodeValueType(node.rvalue)
                 self.setNodeTypeR(node, tyL)
 
             case IntType() | PointerType():
@@ -1371,7 +1396,9 @@ class Sema(NodeVisitor):
                                     None,
                                 )
                                 node.lvalue = c_ast.UnaryOp("*", p)
-                                node.rvalue = c_ast.BinaryOp(node.op[:-1], c_ast.UnaryOp("*", p), node.rvalue)
+                                node.rvalue = c_ast.BinaryOp(
+                                    node.op[:-1], c_ast.UnaryOp("*", p), node.rvalue
+                                )
 
                         node.op = "="
                         self.visit_Assignment(node)

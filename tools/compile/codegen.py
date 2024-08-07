@@ -647,12 +647,11 @@ class Codegen(NodeVisitor):
         r = self.getNodeRecord(node)
 
         def _shouldVisit():
+            if r._visited:
+                return False
+
             if not r._value:
                 return True
-
-            # c_ast.Decl nodes is handled specially
-            if isinstance(node, c_ast.Decl):
-                return not r._visited
 
             # current value is just a Type wrapper
             return type(r._value) in [
@@ -663,8 +662,8 @@ class Codegen(NodeVisitor):
 
         if _shouldVisit():
             self.visit(node)
+            assert not _shouldVisit()
 
-        assert not _shouldVisit()
         return r._value
 
     def getNodeType(self, node: c_ast.Node) -> Type:
@@ -969,7 +968,7 @@ class Codegen(NodeVisitor):
                     )
                 else:
                     if isinstance(tyL, PointerType):  # p + i
-                        sz = tyL._base.size()
+                        sz = 0 if tyL._base.isVoid() else tyL._base.size()
                         if sz > 1:
                             self._asm.emitFormatI("slli", "a2", "a2", log2(sz))
                     elif isinstance(tyR, PointerType):  # i + p
@@ -994,24 +993,35 @@ class Codegen(NodeVisitor):
 
         self.setNodeValue(node, TemporaryValue(ty))
 
+    # Assignment also returns the same value as what was stored in lhs
+    # (so that expressions such as a = b = c are possible). The value
+    # category of the assignment operator is non-lvalue (so that expressions
+    # such as (a=b)=c are invalid).
     def visit_Assignment(self, node: c_ast.Assignment):
         tyL = self.getNodeType(node.lvalue)
         match node.op:
             case "=":
                 match tyL:
                     case StructType():
+                        # node.rvalue could be evaluated multiple times
                         self._asm.emitBuiltinCall(
                             "memcpy",
                             c_ast.UnaryOp("&", node.lvalue),
                             c_ast.UnaryOp("&", node.rvalue),
                             getIntConstant(tyL.size(), "size_t"),
                         )
+                        self.setNodeValue(node, self.getNodeValue(node.rvalue))
 
                     case IntType() | PointerType():
                         self._asm.push(node.rvalue)
                         vL = self.getNodeValue(node.lvalue)
                         self._asm.pop(tyL, "a2", "a3")
                         self._asm.store(vL, "a2", "a3")
+
+                        self._asm.emit('mv a0, a2')
+                        if tyL.size() == 8:
+                            self._asm.emit('mv a1, a3')
+                        self.setNodeValue(node, TemporaryValue(tyL))
 
                     case _:
                         unreachable()
@@ -1022,4 +1032,5 @@ class Codegen(NodeVisitor):
         self.translate(node)
 
     def visit_StructRef(self, node: c_ast.StructRef):
-        pass
+        self.translate(node)
+
