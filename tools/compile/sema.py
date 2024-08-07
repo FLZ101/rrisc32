@@ -663,12 +663,12 @@ def unescapeStr(s: str) -> str:
 
 
 class NodeRecord:
-    __slots__ = ("_value", "_translated")
+    __slots__ = ("_value", "_translated", "_visited")
 
     def __init__(self, v: Value = None) -> None:
         self._value = v
         self._translated: c_ast.Node = None
-
+        self._visited = False
 
 class NodeVisitorCtx:
     def __init__(self) -> None:
@@ -1357,23 +1357,22 @@ class Sema(NodeVisitor):
                         match vL:
                             case Variable():
                                 # convert "a += b" into "a = a + b"
-                                pass
+                                node.rvalue = c_ast.BinaryOp(node.op[:-1], node.lvalue, node.rvalue)
                             case _:
                                 # convert "a += b" into "p = &a; *p = *p + b"
-                                node.lvalue = c_ast.UnaryOp(
-                                    "*",
-                                    c_ast.Decl(
-                                        self._func.getTempVarName(),
-                                        [],
-                                        [],
-                                        [],
-                                        [],
-                                        Node(Value(PointerType(tyL))),
-                                        c_ast.UnaryOp("&", node.lvalue),
-                                        None,
-                                    ),
+                                p = c_ast.Decl(
+                                    self._func.getTempVarName(),
+                                    [],
+                                    [],
+                                    [],
+                                    [],
+                                    Node(Value(PointerType(tyL))),
+                                    c_ast.UnaryOp("&", node.lvalue),
+                                    None,
                                 )
-                        node.rvalue = c_ast.BinaryOp(node.op[:-1], node.lvalue, node.rvalue)
+                                node.lvalue = c_ast.UnaryOp("*", p)
+                                node.rvalue = c_ast.BinaryOp(node.op[:-1], c_ast.UnaryOp("*", p), node.rvalue)
+
                         node.op = "="
                         self.visit_Assignment(node)
 

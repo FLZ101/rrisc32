@@ -1,5 +1,3 @@
-* one pass is enough
-
 * types
 
   * size
@@ -9,6 +7,9 @@
 
   * void
   * int types
+
+    long long values are always in pairs of registers (e.g. a0+a1, t0+t1)
+
   * pointer
   * array
   * struct
@@ -210,20 +211,10 @@
 * optimization
 
   ```
-  push a0
-  pop a0
-  ```
+  push ax
+  pop ay
 
-* statements do not change sp
+    => mv ay, ax
 
-* sizeof
-
-  only support the following forms:
-
-  ```
-  // sizeof(T)
-  sizeof(int)
-
-  // sizeof(id)
-  sizeof(i)
+  mv ax, ax =>
   ```

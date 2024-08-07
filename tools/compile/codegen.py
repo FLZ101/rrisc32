@@ -313,8 +313,10 @@ class Asm:
                         | LocalVariable()
                         | Argument()
                     ):
+                        assert r2 != "a0"
+
                         self.load(addr)
-                        self.load(MemoryAccess(TemporaryValue(ty)), r1, r2)
+                        self.load(MemoryAccess(TemporaryValue(addr.getType())), r1, r2)
 
                     case SymConstant():  # global/static variables
                         _name = addr._name
@@ -390,7 +392,7 @@ class Asm:
                                 unreachable()
 
                     case _:
-                        pass
+                        unreachable()
 
     def store(self, v: Value, r1: str = "a0", r2: str = "a1"):
         match v:
@@ -416,8 +418,13 @@ class Asm:
                         | LocalVariable()
                         | Argument()
                     ):
+                        if r1 == "a0":
+                            assert r2 == "a1"
+                            self.emit(["mv a2, a0", "mv a3, a1"])
+                            r1, r2 = "a2", "a3"
+
                         self.load(addr)
-                        self.store(MemoryAccess(TemporaryValue(ty)), r1, r2)
+                        self.store(MemoryAccess(TemporaryValue(addr.getType())), r1, r2)
 
                     case SymConstant():  # global/static variables
                         _name = addr._name
@@ -441,8 +448,8 @@ class Asm:
                         _offset = addr._i
                         match sz:
                             case 8:
-                                self.emitFormatS("sw", r2, "fp", _offset + 4)
                                 self.emitFormatS("sw", r1, "fp", _offset)
+                                self.emitFormatS("sw", r2, "fp", _offset + 4)
                             case 4:
                                 self.emitFormatS("sw", r1, "fp", _offset)
                             case 2:
@@ -474,9 +481,8 @@ class Asm:
                     case TemporaryValue():
                         match sz:
                             case 8:
-                                assert r2 != "a0"
-                                self.emitFormatS("sw", r2, "a0", 4)
                                 self.emitFormatS("sw", r1, "a0")
+                                self.emitFormatS("sw", r2, "a0", 4)
                             case 4:
                                 self.emitFormatS("sw", r1, "a0")
                             case 2:
@@ -643,6 +649,11 @@ class Codegen(NodeVisitor):
         def _shouldVisit():
             if not r._value:
                 return True
+
+            # c_ast.Decl nodes is handled specially
+            if isinstance(node, c_ast.Decl):
+                return not r._visited
+
             # current value is just a Type wrapper
             return type(r._value) in [
                 Value,
@@ -660,6 +671,11 @@ class Codegen(NodeVisitor):
         return super().getNodeValue(node).getType()
 
     def visit_Decl(self, node: c_ast.Decl):
+        r = self.getNodeRecord(node)
+        if r._visited:
+            return
+        r._visited = True
+
         if not node.name:
             return
 
