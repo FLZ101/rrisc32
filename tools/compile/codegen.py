@@ -69,11 +69,6 @@ class Fragment:
     def addLabel(self, s: str):
         self.add(s + ":", indent="")
 
-    def addLocalLabel(self):
-        s = f".L_{self._name}_{self._i_local}"
-        self.addLabel(s)
-        return s
-
     @property
     def _i_local(self, *, _d={"i": 0}):
         _d["i"] += 1
@@ -121,9 +116,6 @@ class Section:
 
     def addLabel(self, s: str):
         self.curFragment.addLabel(s)
-
-    def addLocalLabel(self):
-        return self.curFragment.addLocalLabel()
 
     def save(self, o: io.StringIO):
         for fragment in self._fragments:
@@ -1206,12 +1198,34 @@ class Codegen(NodeVisitor):
                     self.emit(f"addi sp, sp, {n}")
 
     def visit_TernaryOp(self, node: c_ast.TernaryOp):
+        labelEnd = self._asm.getLocalLabel("end")
+        labelFalse = self._asm.getLocalLabel("false")
+
         self._asm.load(node.cond)
-        self._asm.emit("beqz a0, $1f")
+        self._asm.emit(f"beqz a0, ${labelFalse}")
+
         self._asm.load(node.iftrue)
-        self._asm.emit("j $2f")
-        self._asm.emitLabel("1")
+        self._asm.emit(f"j ${labelEnd}")
+
+        self._asm.emitLabel(f"{labelFalse}")
         self._asm.load(node.iffalse)
-        self._asm.emitLabel("2")
+
+        self._asm.emitLabel(f"{labelEnd}")
 
         self.setNodeValue(node, TemporaryValue(self.getNodeType(node)))
+
+    def getLabel(self, name: str):
+        return f".LF.{self._func._name}.{name}"
+
+    def visit_Label(self, node: c_ast.Label):
+        label = self.getLabel(node.name)
+        self._asm.emitLabel(label)
+
+        self.visit(node.stmt)
+
+    def visit_Goto(self, node: c_ast.Goto):
+        label = self.getLabel(node.name)
+        self._asm.emit(f"j ${label}")
+
+    def visit_If(self, node: c_ast.If):
+        pass
