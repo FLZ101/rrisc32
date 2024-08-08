@@ -27,7 +27,12 @@ def unreachable(*args):
 
 def log2(i: int):
     arr = [1, 2, 4, 8]
-    return arr.index(i)
+    if i in arr:
+        return arr.index(i)
+    if i > arr[-1]:
+        assert i % 2 == 0
+        return 1 + log2(i // 2)
+    unreachable()
 
 
 # https://en.cppreference.com/w/c/language/type
@@ -1327,23 +1332,6 @@ class Sema(NodeVisitor):
             ),
         )
 
-    def isValueStable(self, node: c_ast.Node):
-        v = self.getNodeValue(node)
-        match v:
-            case Constant() | Variable():
-                return True
-            case _:
-                match node:
-                    case c_ast.UnaryOp():
-                        match node.op:
-                            case "&" | "*":
-                                return self.isValueStable(node.expr)
-                            case _:
-                                return False
-
-                    case _:
-                        return False
-
     # https://en.cppreference.com/w/c/language/operator_assignment
     def visit_Assignment(self, node: c_ast.Assignment):
         vL, tyL = self.getNodeValueType(node.lvalue)
@@ -1464,6 +1452,17 @@ class Sema(NodeVisitor):
                             unreachable()
                     self.setNodeValue(node, IntConstant(i, ty))
                 else:
+                    if ty.size() == 8:
+                        # translate -x into ~x + 1
+                        if node.op == "-":
+                            self.setNodeTranslated(
+                                node,
+                                c_ast.BinaryOp(
+                                    "+", c_ast.UnaryOp("~", node.expr), Node(getIntConstant(1))
+                                ),
+                            )
+                            return
+
                     self.setNodeTypeR(node, ty)
 
             case "!":
@@ -1701,7 +1700,7 @@ class Sema(NodeVisitor):
                     case _:
                         raise CCError(f"can not {node.op} {tyL} and {tyR}")
 
-            case "<" | "<=" | ">" | ">=":
+            case "<" | ">=":
                 vL, tyL = self.tryConvertToPointer(node, "left")
                 vR, tyR = self.tryConvertToPointer(node, "right")
 
@@ -1713,10 +1712,6 @@ class Sema(NodeVisitor):
                             match node.op:
                                 case "<":
                                     i = 1 if iL < iR else 0
-                                case "<=":
-                                    i = 1 if iL <= iR else 0
-                                case ">":
-                                    i = 1 if iL > iR else 0
                                 case ">=":
                                     i = 1 if iL >= iR else 0
                                 case _:
@@ -1732,6 +1727,12 @@ class Sema(NodeVisitor):
                         _f()
                     case _:
                         raise CCError(f"can not {node.op} {tyL} and {tyR}")
+
+            case ">" | "<=":
+                # translate 'a > b' to 'b < a'
+                self.setNodeTranslated(
+                    node, c_ast.BinaryOp("<" if node.op == ">" else ">=", node.right, node.left)
+                )
 
             case _:
                 raise CCError("unknown binary operator", node.op)

@@ -1,4 +1,5 @@
 import io
+import textwrap
 
 from sema import *
 
@@ -40,6 +41,7 @@ class Fragment:
         self._lines.append("")
 
     def addRaw(self, s: str, *, indent="    "):
+        s = textwrap.dedent(s)
         for line in s.splitlines():
             line = line.strip()
             if line == "":
@@ -595,20 +597,20 @@ class Asm:
 
         sec.addRaw(
             """
-                blez    a2, $2f
-                add     a3, a1, a2
+            blez    a2, $2f
+            add     a3, a1, a2
         1:
-                lbu     a4, a1, 0
-                addi    a5, a1, 1
-                addi    a2, a0, 1
-                sb      a0, a4, 0
-                mv      a0, a2
-                mv      a1, a5
-                bltu    a5, a3, $1b
-                mv      a0, a2
-                ret
+            lbu     a4, a1, 0
+            addi    a5, a1, 1
+            addi    a2, a0, 1
+            sb      a0, a4, 0
+            mv      a0, a2
+            mv      a1, a5
+            bltu    a5, a3, $1b
+            mv      a0, a2
+            ret
         2:
-                ret
+            ret
             """
         )
         sec.add(f".size ${name}, -($. ${name})")
@@ -924,7 +926,7 @@ class Codegen(NodeVisitor):
                 unreachable()
 
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
-        v = self.getNodeValue(node.expr)
+        v, ty = self.getNodeValueType(node.expr)
         match node.op:
             case "&":
                 self.setNodeValue(node, self._asm.addressOf(v))
@@ -932,14 +934,28 @@ class Codegen(NodeVisitor):
             case "*":
                 self.setNodeValue(node, MemoryAccess(v))
 
-            case "+" | "-" | "~":
+            case "+":
                 pass
+
+            case "-":
+                if ty.size() == 8:
+                    self.translate(node)
+                else:
+                    self._asm.emit("neg a0,a0")
+
+            case "~":
+                if ty.size() == 8:
+                    self._asm.emit("not a1, a1")
+                self._asm.emit("not a0, a0")
 
             case "!":
-                pass
+                if ty.size() == 8:
+                    self._asm.emit(["or a0, a0, a1", "seqz a0, a0", "li a1, 0"])
+                else:
+                    self._asm.emit("seqz a0, a0")
 
             case "++" | "--" | "p++" | "p--":
-                pass
+                self.translate(node)
 
             case _:
                 unreachable()
@@ -976,18 +992,144 @@ class Codegen(NodeVisitor):
                         if sz > 1:
                             self._asm.emitFormatI("slli", "a0", "a0", log2(sz))
                     self._asm.emit("add a0, a0, a2")
+
             case "-":
-                pass
-            case "*" | "/" | "%" | "&" | "|" | "^":
-                pass
-            case "<<" | ">>":
-                pass
-            case "&&" | "||":
-                pass
+                if ty.size() == 8:
+                    self._asm.emit(
+                        [
+                            "sub     a1, a1, a3",
+                            "sltu    a3, a0, a2",
+                            "sub     a1, a1, a3",
+                            "sub     a0, a0, a2",
+                        ]
+                    )
+                else:
+                    if isinstance(tyL, PointerType):
+                        sz = 0 if tyL._base.isVoid() else tyL._base.size()
+                        if sz > 1:
+                            self._asm.emitFormatI("slli", "a2", "a2", log2(sz))
+                    self._asm.emit("sub a0, a0, a2")
+
+            case "*":
+                if ty.size() == 8:
+                    self._asm.emit(
+                        [
+                            "mul     a1, a2, a1",
+                            "mul     a3, a3, a0",
+                            "add     a1, a1, a3",
+                            "mulhu   a3, a2, a0",
+                            "add     a1, a1, a3",
+                            "mul     a0, a2, a0",
+                        ]
+                    )
+                else:
+                    self._asm.emit("mul a0, a0, a2")
+
+            case "/":
+                if ty.size() == 8:
+                    raise CCNotImplemented("64-bit /")
+                else:
+                    assert isinstance(tyL, IntType)
+                    mnemonic = "divu" if tyL._unsigned else "div"
+                    self._asm.emit(f"{mnemonic} a0, a0, a2")
+
+            case "%":
+                if ty.size() == 8:
+                    raise CCNotImplemented("64-bit %")
+                else:
+                    assert isinstance(tyL, IntType)
+                    mnemonic = "remu" if tyL._unsigned else "rem"
+                    self._asm.emit(f"{mnemonic} a0, a0, a2")
+
+            case "&" | "|" | "^":
+                mnemonic = {"&": "and", "|": "or", "^": "xor"}[node.op]
+                if ty.size() == 8:
+                    self._asm.emit(f"{mnemonic} a1, a1, a3")
+                self._asm.emit(f"{mnemonic} a0, a0, a2")
+
+            case "<<":
+                if ty.size() == 8:
+                    raise CCNotImplemented(f"64-bit <<")
+                else:
+                    self._asm.emit(f"sll a0, a0, a2")
+            case ">>":
+                if ty.size() == 8:
+                    raise CCNotImplemented(f"64-bit >>")
+                else:
+                    assert isinstance(tyL, IntType)
+                    mnemonic = "srl" if tyL._unsigned else "sra"
+                    self._asm.emit(f"{mnemonic} a0, a0, a2")
+
+            case "&&":
+                if ty.size() == 8:
+                    self._asm.emit(
+                        [
+                            "or      a0, a0, a1",
+                            "snez    a0, a0",
+                            "or      a2, a2, a3",
+                            "snez    a1, a2",
+                            "and     a0, a0, a1",
+                            "li      a1, 0",
+                        ]
+                    )
+                else:
+                    self._asm.emit(["snez a0, a0", "snez a2, a2", "and a0, a0, a2"])
+
+            case "||":
+                if ty.size() == 8:
+                    self._asm.emit(
+                        [
+                            "or      a1, a1, a3",
+                            "or      a0, a0, a2",
+                            "or      a0, a0, a1",
+                            "snez    a0, a0",
+                            "li      a1, 0",
+                        ]
+                    )
+                else:
+                    self._asm.emit(["or a0, a0, a2", "snez a0, a0"])
+
             case "==" | "!=":
-                pass
-            case "<" | "<=" | ">" | ">=":
-                pass
+                mnemonic = "seqz" if node.op == "==" else "snez"
+                if ty.size() == 8:
+                    self._asm.emit(
+                        [
+                            "xor     a1, a1, a3",
+                            "xor     a0, a0, a2",
+                            "or      a0, a0, a1",
+                            f"{mnemonic}    a0, a0",
+                            "li      a1, 0",
+                        ]
+                    )
+                else:
+                    self._asm.emit(["xor a0, a0, a2", f"{mnemonic} a0, a0"])
+
+            case "<" | ">=":
+                mnemonic = "sltu"
+                if isinstance(ty, IntType) and not ty._unsigned:
+                    mnemonic = "slt"
+
+                if ty.size() == 8:
+                    self._asm._secText.addRaw(
+                        f"""
+                        beq     a1, a3, $1f
+                        {mnemonic}     a0, a1, a3
+                        j       $2f
+                    1:
+                        sltu    a0, a0, a2
+                    2:
+                        li      a1, 0
+                        """
+                    )
+                else:
+                    self._asm.emit(f"{mnemonic} a0, a0, a2")
+
+                if node.op == ">=":
+                    self._asm.emit("xori a0, a0, 1")
+
+            case ">" | "<=":
+                self.translate(node)
+
             case _:
                 unreachable()
 
