@@ -152,6 +152,9 @@ class Asm:
     def emit(self, s: str | list[str]):
         self._secText.add(s)
 
+    def emitLabel(self, s: str):
+        self._secText.addLabel(s)
+
     def checkImm(self, i: int, n: int):
         mins = (1 << (n - 1)) - (1 << n)
         maxs = (1 << (n - 1)) - 1
@@ -517,8 +520,8 @@ class Asm:
         self.emitCall(f"__builtin_{name}", *args)
 
     def emitCall(self, name: str, *args: Value | c_ast.Node):
-        n = 0
         # push arguments
+        n = 0
         for arg in reversed(args):
             arg = self.getNodeValue(arg)
             self.push(arg)
@@ -1175,3 +1178,40 @@ class Codegen(NodeVisitor):
 
     def visit_StructRef(self, node: c_ast.StructRef):
         self.translate(node)
+
+    def visit_ExprList(self, node: c_ast.ExprList):
+        for expr in node.exprs:
+            v = self.getNodeValue(expr)
+        self.setNodeValue(node, v)
+
+    def visit_FuncCall(self, node: c_ast.FuncCall):
+        args: list[c_ast.Node] = node.args.exprs
+        func = self.getNodeValue(node.name)
+        match func:
+            case SymConstant():
+                self._asm.emitCall(func._name, args)
+
+            case _:  # an indirect call
+                # push arguments
+                n = 0
+                for arg in reversed(args):
+                    self._asm.push(arg)
+                    n += align(arg.getType().size(), 4)
+
+                self._asm.load(node.name)  # load function address
+                self._asm.emit(f"jalr a0")
+
+                # restore sp
+                if n > 0:
+                    self.emit(f"addi sp, sp, {n}")
+
+    def visit_TernaryOp(self, node: c_ast.TernaryOp):
+        self._asm.load(node.cond)
+        self._asm.emit("beqz a0, $1f")
+        self._asm.load(node.iftrue)
+        self._asm.emit("j $2f")
+        self._asm.emitLabel("1")
+        self._asm.load(node.iffalse)
+        self._asm.emitLabel("2")
+
+        self.setNodeValue(node, TemporaryValue(self.getNodeType(node)))

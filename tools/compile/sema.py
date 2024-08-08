@@ -413,11 +413,6 @@ class SymConstant(Constant):
             assert ty.isComplete()
 
 
-class TemporaryValue(RValue):
-    def __init__(self, ty: Type) -> None:
-        super().__init__(ty)
-
-
 class Scope(ABC):
     def __init__(self, prev: Optional["Scope"] = None) -> None:
         self._symbolTable: dict[str, Type | Variable | Function] = {}
@@ -1332,6 +1327,34 @@ class Sema(NodeVisitor):
             ),
         )
 
+    # whether evaluation of @node involve no computations (which could produce temporary values)
+    def isValueStable(self, node: c_ast.Node):
+        v = self.getNodeValue(node)
+        match v:
+            case Constant() | Variable():
+                return True
+            case _:
+                match node:
+                    case c_ast.UnaryOp():
+                        match node.op:
+                            case "&" | "*":
+                                return self.isValueStable(node.expr)
+        return False
+
+    # @node is evaluated once and its value is stored in a temporary local variable
+    def makeValueStable(self, node: c_ast.Node):
+        ty = self.getNodeType(node)
+        return c_ast.Decl(
+            self._func.getTempVarName(),
+            [],
+            [],
+            [],
+            [],
+            Node(Value(ty)),
+            node,
+            None,
+        )
+
     # https://en.cppreference.com/w/c/language/operator_assignment
     def visit_Assignment(self, node: c_ast.Assignment):
         vL, tyL = self.getNodeValueType(node.lvalue)
@@ -1362,27 +1385,16 @@ class Sema(NodeVisitor):
                         self.setNodeTypeR(node, tyL)
 
                     case "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=":
-                        match vL:
-                            case Variable():
-                                # convert "a += b" into "a = a + b"
-                                node.rvalue = c_ast.BinaryOp(node.op[:-1], node.lvalue, node.rvalue)
-                            case _:
-                                # convert "a += b" into "p = &a; *p = *p + b"
-                                p = c_ast.Decl(
-                                    self._func.getTempVarName(),
-                                    [],
-                                    [],
-                                    [],
-                                    [],
-                                    Node(Value(PointerType(tyL))),
-                                    c_ast.UnaryOp("&", node.lvalue),
-                                    None,
-                                )
-                                node.lvalue = c_ast.UnaryOp("*", p)
-                                node.rvalue = c_ast.BinaryOp(
-                                    node.op[:-1], c_ast.UnaryOp("*", p), node.rvalue
-                                )
-
+                        if self.isValueStable(node.lvalue):
+                            # convert "a += b" into "a = a + b"
+                            node.rvalue = c_ast.BinaryOp(node.op[:-1], node.lvalue, node.rvalue)
+                        else:
+                            # convert "a += b" into "p = &a; *p = *p + b"
+                            p = self.makeValueStable(c_ast.UnaryOp("&", node.lvalue))
+                            node.lvalue = c_ast.UnaryOp("*", p)
+                            node.rvalue = c_ast.BinaryOp(
+                                node.op[:-1], c_ast.UnaryOp("*", p), node.rvalue
+                            )
                         node.op = "="
                         self.visit_Assignment(node)
 
@@ -1490,7 +1502,31 @@ class Sema(NodeVisitor):
                         pass
                     case _:
                         raise CCError("not an integer or a pointer to object")
-                self.setNodeTypeR(node, ty)
+
+                c = node.op[-1]
+                if node.op.startswith("p"):
+                    # translate x++ into p = &x; *p += 1, *p - 1
+                    p = self.makeValueStable(c_ast.UnaryOp("&", node.expr))
+                    self.setNodeTranslated(
+                        node,
+                        c_ast.ExprList(
+                            [
+                                c_ast.Assignment(
+                                    f"{c}=", c_ast.UnaryOp("*", p), Node(getIntConstant(1))
+                                ),
+                                c_ast.BinaryOp(
+                                    "-" if c == "+" else "+",
+                                    c_ast.UnaryOp("*", p),
+                                    Node(getIntConstant(1)),
+                                ),
+                            ]
+                        ),
+                    )
+                else:
+                    # translate ++x into x += 1
+                    self.setNodeTranslated(
+                        node, c_ast.Assignment(f"{c}=", node.expr, Node(getIntConstant(1)))
+                    )
 
             case _:
                 raise CCError("unknown unary operator", node.op)
