@@ -28,6 +28,7 @@ void f() {
   // CC-NEXT:     add a0, a0, a2
   // CC-NEXT:     pop a2
   // CC-NEXT:     sw a0, a2, 0
+  // CC-NEXT:     mv a0, a2
 
   { a1[1] += 10; }
 
@@ -48,6 +49,7 @@ void f() {
   // CC-NEXT:     pop a2
   // CC-NEXT:     lw a0, fp, -44
   // CC-NEXT:     sw a0, a2, 0
+  // CC-NEXT:     mv a0, a2
 
   a2[3] = 30;
 
@@ -61,6 +63,7 @@ void f() {
   // CC-NEXT:     add a0, a0, a2
   // CC-NEXT:     pop a2
   // CC-NEXT:     sw a0, a2, 0
+  // CC-NEXT:     mv a0, a2
 
   { a2[3] += 30; }
 
@@ -81,6 +84,47 @@ void f() {
   // CC-NEXT:     pop a2
   // CC-NEXT:     lw a0, fp, -44
   // CC-NEXT:     sw a0, a2, 0
+  // CC-NEXT:     mv a0, a2
+
+  int i;
+
+  i = a1[1];
+
+  // CC-NEXT:     li a0, 1
+  // CC-NEXT:     push a0
+  // CC-NEXT:     li a0, $a1
+  // CC-NEXT:     pop a2
+  // CC-NEXT:     slli a2, a2, 2
+  // CC-NEXT:     add a0, a0, a2
+  // CC-NEXT:     lw a0, a0, 0
+  // CC-NEXT:     push a0
+  // CC-NEXT:     pop a2
+  // CC-NEXT:     sw fp, a2, -44
+  // CC-NEXT:     mv a0, a2
+
+  i += a1[1];
+
+  // CC-NEXT:     li a0, 1
+  // CC-NEXT:     push a0
+  // CC-NEXT:     li a0, $a1
+  // CC-NEXT:     pop a2
+  // CC-NEXT:     slli a2, a2, 2
+  // CC-NEXT:     add a0, a0, a2
+  // CC-NEXT:     lw a0, a0, 0
+  // CC-NEXT:     push a0
+  // CC-NEXT:     lw a0, fp, -44
+  // CC-NEXT:     pop a2
+  // CC-NEXT:     add a0, a0, a2
+  // CC-NEXT:     push a0
+  // CC-NEXT:     pop a2
+  // CC-NEXT:     sw fp, a2, -44
+  // CC-NEXT:     mv a0, a2
+
+  // CC-NEXT:     mv sp, fp
+  // CC-NEXT:     pop fp
+  // CC-NEXT:     pop ra
+  // CC-NEXT:     ret
+  // CC-NEXT:     .size $f, -($. $f)
 }
 
 // CC:          .data

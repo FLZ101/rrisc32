@@ -1327,6 +1327,23 @@ class Sema(NodeVisitor):
             ),
         )
 
+    def isValueStable(self, node: c_ast.Node):
+        v = self.getNodeValue(node)
+        match v:
+            case Constant() | Variable():
+                return True
+            case _:
+                match node:
+                    case c_ast.UnaryOp():
+                        match node.op:
+                            case "&" | "*":
+                                return self.isValueStable(node.expr)
+                            case _:
+                                return False
+
+                    case _:
+                        return False
+
     # https://en.cppreference.com/w/c/language/operator_assignment
     def visit_Assignment(self, node: c_ast.Assignment):
         vL, tyL = self.getNodeValueType(node.lvalue)
@@ -1344,32 +1361,10 @@ class Sema(NodeVisitor):
                     raise CCError(f"can not {node.op} a struct")
 
                 vR, tyR = self.getNodeValueType(node.rvalue)
-                checkLValue(vR)  # struct rvalue is not supported
+                if not isinstance(vR, LValue):
+                    raise CCNotImplemented("struct rvalue")
                 if not isCompatible(tyL, tyR):
                     raise CCError(f"can not assign {tyL} {tyR}")
-
-                if (
-                    isinstance(node.rvalue, c_ast.UnaryOp)
-                    and node.rvalue.op == "*"
-                    and isinstance(vR, Variable)
-                ):
-                    pass
-                else:
-                    # translate 'foo1 = foo2' to 'p2 = &foo2; foo1 = *p2'
-                    node.rvalue = c_ast.UnaryOp(
-                        "*",
-                        c_ast.Decl(
-                            self._func.getTempVarName(),
-                            [],
-                            [],
-                            [],
-                            [],
-                            Node(Value(PointerType(tyR))),
-                            c_ast.UnaryOp("&", node.rvalue),
-                            None,
-                        ),
-                    )
-                    vR, tyR = self.getNodeValueType(node.rvalue)
                 self.setNodeTypeR(node, tyL)
 
             case IntType() | PointerType():

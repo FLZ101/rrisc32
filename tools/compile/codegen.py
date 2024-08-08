@@ -647,8 +647,8 @@ class Codegen(NodeVisitor):
         r = self.getNodeRecord(node)
 
         def _shouldVisit():
-            if r._visited:
-                return False
+            if isinstance(node, c_ast.Decl):
+                return not r._visited
 
             if not r._value:
                 return True
@@ -1003,14 +1003,14 @@ class Codegen(NodeVisitor):
             case "=":
                 match tyL:
                     case StructType():
-                        # node.rvalue could be evaluated multiple times
                         self._asm.emitBuiltinCall(
                             "memcpy",
                             c_ast.UnaryOp("&", node.lvalue),
                             c_ast.UnaryOp("&", node.rvalue),
                             getIntConstant(tyL.size(), "size_t"),
                         )
-                        self.setNodeValue(node, self.getNodeValue(node.rvalue))
+
+                        # there is no struct rvalue
 
                     case IntType() | PointerType():
                         self._asm.push(node.rvalue)
@@ -1018,9 +1018,9 @@ class Codegen(NodeVisitor):
                         self._asm.pop(tyL, "a2", "a3")
                         self._asm.store(vL, "a2", "a3")
 
-                        self._asm.emit('mv a0, a2')
+                        self._asm.emit("mv a0, a2")
                         if tyL.size() == 8:
-                            self._asm.emit('mv a1, a3')
+                            self._asm.emit("mv a1, a3")
                         self.setNodeValue(node, TemporaryValue(tyL))
 
                     case _:
@@ -1033,4 +1033,3 @@ class Codegen(NodeVisitor):
 
     def visit_StructRef(self, node: c_ast.StructRef):
         self.translate(node)
-

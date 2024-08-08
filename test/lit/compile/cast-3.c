@@ -28,10 +28,13 @@ void f() {
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sb fp, a2, -4
+// CC-NEXT:     mv a0, a2
+
 // CC-NEXT:     li a0, 253
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sb fp, a2, -24
+// CC-NEXT:     mv a0, a2
 
   c = 3;
   uc = 3;
@@ -40,10 +43,13 @@ void f() {
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sb fp, a2, -4
+// CC-NEXT:     mv a0, a2
+
 // CC-NEXT:     li a0, 3
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sb fp, a2, -24
+// CC-NEXT:     mv a0, a2
 
   ll = -3;
   ull = -3;
@@ -56,6 +62,9 @@ void f() {
 // CC-NEXT:     pop a3
 // CC-NEXT:     sw fp, a2, -20
 // CC-NEXT:     sw fp, a3, -16
+// CC-NEXT:     mv a0, a2
+// CC-NEXT:     mv a1, a3
+
 // CC-NEXT:     li a1, 0xffffffff
 // CC-NEXT:     li a0, 0xfffffffd
 // CC-NEXT:     push a1
@@ -64,6 +73,8 @@ void f() {
 // CC-NEXT:     pop a3
 // CC-NEXT:     sw fp, a2, -40
 // CC-NEXT:     sw fp, a3, -36
+// CC-NEXT:     mv a0, a2
+// CC-NEXT:     mv a1, a3
 
   ll = 3;
   ull = 3;
@@ -76,6 +87,9 @@ void f() {
 // CC-NEXT:     pop a3
 // CC-NEXT:     sw fp, a2, -20
 // CC-NEXT:     sw fp, a3, -16
+// CC-NEXT:     mv a0, a2
+// CC-NEXT:     mv a1, a3
+
 // CC-NEXT:     li a1, 0x0
 // CC-NEXT:     li a0, 0x3
 // CC-NEXT:     push a1
@@ -84,6 +98,9 @@ void f() {
 // CC-NEXT:     pop a3
 // CC-NEXT:     sw fp, a2, -40
 // CC-NEXT:     sw fp, a3, -36
+// CC-NEXT:     mv a0, a2
+// CC-NEXT:     mv a1, a3
+
 
   c = uc;
   ull = ll;
@@ -92,6 +109,8 @@ void f() {
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sb fp, a2, -4
+// CC-NEXT:     mv a0, a2
+
 // CC-NEXT:     lw a0, fp, -20
 // CC-NEXT:     lw a1, fp, -16
 // CC-NEXT:     push a1
@@ -100,6 +119,8 @@ void f() {
 // CC-NEXT:     pop a3
 // CC-NEXT:     sw fp, a2, -40
 // CC-NEXT:     sw fp, a3, -36
+// CC-NEXT:     mv a0, a2
+// CC-NEXT:     mv a1, a3
 
   i = s;
   i = us;
@@ -108,10 +129,13 @@ void f() {
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sw fp, a2, -12
+// CC-NEXT:     mv a0, a2
+
 // CC-NEXT:     lhu a0, fp, -28
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sw fp, a2, -12
+// CC-NEXT:     mv a0, a2
 
   ll = s;
   ll = us;
@@ -124,6 +148,9 @@ void f() {
 // CC-NEXT:     pop a3
 // CC-NEXT:     sw fp, a2, -20
 // CC-NEXT:     sw fp, a3, -16
+// CC-NEXT:     mv a0, a2
+// CC-NEXT:     mv a1, a3
+
 // CC-NEXT:     lhu a0, fp, -28
 // CC-NEXT:     srai a1, a0, 31
 // CC-NEXT:     push a1
@@ -132,6 +159,9 @@ void f() {
 // CC-NEXT:     pop a3
 // CC-NEXT:     sw fp, a2, -20
 // CC-NEXT:     sw fp, a3, -16
+// CC-NEXT:     mv a0, a2
+// CC-NEXT:     mv a1, a3
+
 
   i = ll;
 
@@ -140,6 +170,7 @@ void f() {
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sw fp, a2, -12
+// CC-NEXT:     mv a0, a2
 
   s = ll;
   us = i;
@@ -150,11 +181,14 @@ void f() {
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sh fp, a2, -8
+// CC-NEXT:     mv a0, a2
+
 // CC-NEXT:     lw a0, fp, -12
 // CC-NEXT:     zext.h a0, a0
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sh fp, a2, -28
+// CC-NEXT:     mv a0, a2
 
 // CC-NEXT:     mv sp, fp
 // CC-NEXT:     pop fp
