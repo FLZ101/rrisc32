@@ -138,6 +138,9 @@ class Asm:
     def emitLabel(self, s: str):
         self._secText.addLabel(s)
 
+    def emitEmptyLine(self):
+        self._secText.addEmptyLine()
+
     def checkImm(self, i: int, n: int):
         mins = (1 << (n - 1)) - (1 << n)
         maxs = (1 << (n - 1)) - 1
@@ -1307,3 +1310,15 @@ class Codegen(NodeVisitor):
     def visit_Continue(self, node: c_ast.Continue):
         label = self.getNodeLabels(node)[0]
         self._asm.emit(f"j ${label}")
+
+    def visit_Pragma(self, node: c_ast.Pragma):
+        r = self.getNodeRecord(node)
+
+        insts: list[str] = r._pragma.get("ASM", [])
+        for inst in insts:
+            if inst == "":
+                self._asm.emitEmptyLine()
+            elif inst.endswith(":"):
+                self._asm.emitLabel(inst[:-1])
+            else:
+                self._asm.emit(inst)

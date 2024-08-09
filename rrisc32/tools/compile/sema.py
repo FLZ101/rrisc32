@@ -2,7 +2,7 @@ import sys
 import traceback
 
 from abc import ABC
-from typing import Optional
+from typing import Optional, Any
 
 from pycparser import c_ast
 
@@ -671,7 +671,7 @@ def unescapeStr(s: str) -> str:
 
 
 class NodeRecord:
-    __slots__ = ("_value", "_translated", "_visited", "_loop", "_labels", "_cases")
+    __slots__ = ("_value", "_translated", "_visited", "_loop", "_labels", "_cases", "_pragma")
 
     def __init__(self, v: Value = None) -> None:
         self._value = v
@@ -679,6 +679,7 @@ class NodeRecord:
         self._visited = False
         self._labels: list[str] = None
         self._cases: list[tuple[Optional[int], str]] = None
+        self._pragma: dict[str, Any] = {}
 
 
 class NodeVisitorCtx:
@@ -2066,4 +2067,11 @@ class Sema(NodeVisitor):
 
     # https://en.cppreference.com/w/c/preprocessor/impl
     def visit_Pragma(self, node: c_ast.Pragma):
-        pass
+        directive: str = node.string
+        if directive.startswith("ASM "):
+            insts = []
+            for s in directive[4:].split(";"):
+                insts.append(s.strip())
+            if len(insts) > 0:
+                r = self.getNodeRecord(node)
+                r._pragma["ASM"] = insts
