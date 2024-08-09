@@ -69,11 +69,6 @@ class Fragment:
     def addLabel(self, s: str):
         self.add(s + ":", indent="")
 
-    @property
-    def _i_local(self, *, _d={"i": 0}):
-        _d["i"] += 1
-        return _d["i"]
-
     def save(self, o: io.StringIO):
         for line in self._lines:
             print(line, file=o)
@@ -136,10 +131,6 @@ class Asm:
     def addStr(self, sLit: StrLiteral) -> str:
         self._secRodata.addLabel(sLit._label)
         self._secRodata.add(f".asciz {sLit._sOrig}")
-
-    def getLocalLabel(self, name: str, *, _i=[0]):
-        _i[0] += 1
-        return f".LL{_i[0]}.{name}"
 
     def emit(self, s: str | list[str]):
         self._secText.add(s)
@@ -506,12 +497,30 @@ class Asm:
         if ty.size() == 8:
             self.emit(f"pop {r2}")
 
+    def emitCond(self, node: c_ast.Node):
+        self.load(node)
+
+        ty = self._cg.getNodeType(node)
+        if ty.size() == 8:
+            self.emit("or a0, a0, a1")
+
+    def emitPrelogue(self):
+        self.emit(["push ra", "push fp", "mv fp, sp"])
+        self.emitFormatI("addi", "sp", "sp", -self._cg._func._maxOffset)
+
+    def emitEpilogue(self):
+        self.emit(["mv sp, fp", "pop fp", "pop ra"])
+
+    def emitRet(self):
+        self.emitEpilogue()
+        self.emit("ret")
+
     def emitBuiltinCall(self, name: str, *args: Value | c_ast.Node):
         assert name in self._builtins
         self._builtins[name] += 1
         self.emitCall(f"__builtin_{name}", *args)
 
-    def emitCall(self, name: str, *args: Value | c_ast.Node):
+    def emitCall(self, name: str | SymConstant | c_ast.Node, *args: Value | c_ast.Node):
         # push arguments
         n = 0
         for arg in reversed(args):
@@ -519,7 +528,16 @@ class Asm:
             self.push(arg)
             n += align(arg.getType().size(), 4)
 
-        self.emit(f"call ${name}")
+        match name:
+            case str():
+                self.emit(f"call ${name}")
+            case SymConstant() as sym:
+                self.emit(f"call ${sym._name}")
+            case c_ast.Node() as node:
+                self.load(node.name)  # load function address
+                self.emit(f"jalr a0")
+            case _:
+                unreachable()
 
         # restore sp
         if n > 0:
@@ -776,17 +794,6 @@ class Codegen(NodeVisitor):
             case _:
                 unreachable()
 
-    def emitPrelogue(self):
-        self._asm.emit(["push ra", "push fp", "mv fp, sp"])
-        self._asm.emitFormatI("addi", "sp", "sp", -self._func._maxOffset)
-
-    def emitEpilogue(self):
-        self._asm.emit(["mv sp, fp", "pop fp", "pop ra"])
-
-    def emitRet(self):
-        self.emitEpilogue()
-        self._asm.emit("ret")
-
     def translate(self, node: c_ast.Node):
         self.setNodeTranslated(node, self.getNodeTranslated(node))
 
@@ -818,7 +825,7 @@ class Codegen(NodeVisitor):
     def visit_Compound(self, node: c_ast.Compound):
         isFuncBody = isinstance(self.getParent(), c_ast.FuncDef)
         if isFuncBody:
-            self.emitPrelogue()
+            self._asm.emitPrelogue()
 
         block_items = node.block_items or []
         for _ in block_items:
@@ -826,12 +833,12 @@ class Codegen(NodeVisitor):
 
         if isFuncBody:
             if len(block_items) == 0 or not isinstance(block_items[-1], c_ast.Return):
-                self.emitRet()
+                self._asm.emitRet()
 
     def visit_Return(self, node: c_ast.Return):
         if node.expr:
             self._asm.load(node.expr)
-        self.emitRet()
+        self._asm.emitRet()
 
     def visit_Cast(self, node: c_ast.Cast):
         t1 = self.getNodeType(node.to_type)
@@ -1178,54 +1185,125 @@ class Codegen(NodeVisitor):
 
     def visit_FuncCall(self, node: c_ast.FuncCall):
         args: list[c_ast.Node] = node.args.exprs
-        func = self.getNodeValue(node.name)
-        match func:
-            case SymConstant():
-                self._asm.emitCall(func._name, args)
-
-            case _:  # an indirect call
-                # push arguments
-                n = 0
-                for arg in reversed(args):
-                    self._asm.push(arg)
-                    n += align(arg.getType().size(), 4)
-
-                self._asm.load(node.name)  # load function address
-                self._asm.emit(f"jalr a0")
-
-                # restore sp
-                if n > 0:
-                    self.emit(f"addi sp, sp, {n}")
+        r = self.getNodeRecord(node.name)
+        if isinstance(r._value, SymConstant):
+            self._asm.emitCall(r._value, args)
+        else:
+            self._asm.emitCall(node.name, args)
 
     def visit_TernaryOp(self, node: c_ast.TernaryOp):
-        labelEnd = self._asm.getLocalLabel("end")
-        labelFalse = self._asm.getLocalLabel("false")
+        labelFalse, labelEnd = self.getNodeLabels(node)
 
-        self._asm.load(node.cond)
+        self._asm.emitCond(node.cond)
         self._asm.emit(f"beqz a0, ${labelFalse}")
 
         self._asm.load(node.iftrue)
         self._asm.emit(f"j ${labelEnd}")
 
-        self._asm.emitLabel(f"{labelFalse}")
+        self._asm.emitLabel(labelFalse)
         self._asm.load(node.iffalse)
 
-        self._asm.emitLabel(f"{labelEnd}")
+        self._asm.emitLabel(labelEnd)
 
         self.setNodeValue(node, TemporaryValue(self.getNodeType(node)))
 
-    def getLabel(self, name: str):
-        return f".LF.{self._func._name}.{name}"
-
     def visit_Label(self, node: c_ast.Label):
-        label = self.getLabel(node.name)
+        label = self.getNodeLabels(node)[0]
         self._asm.emitLabel(label)
 
         self.visit(node.stmt)
 
     def visit_Goto(self, node: c_ast.Goto):
-        label = self.getLabel(node.name)
+        label = self.getNodeLabels(node)[0]
         self._asm.emit(f"j ${label}")
 
     def visit_If(self, node: c_ast.If):
-        pass
+        labelFalse, labelEnd = self.getNodeLabels(node)
+
+        self._asm.emitCond(node.cond)
+        self._asm.emit(f"beqz a0, ${labelFalse}")
+
+        self.visit(node.iftrue)
+        self._asm.emit(f"j ${labelEnd}")
+
+        self._asm.emitLabel(labelFalse)
+        self.visit(node.iffalse)
+
+        self._asm.emitLabel(labelEnd)
+
+    def visit_While(self, node: c_ast.While):
+        labelStart, labelEnd = self.getNodeLabels(node)
+
+        self._asm.emitLabel(labelStart)
+        self._asm.emitCond(node.cond)
+        self._asm.emit(f"beqz a0, ${labelEnd}")
+
+        self.visit(node.stmt)
+        self._asm.emit(f"j ${labelStart}")
+
+        self._asm.emitLabel(labelEnd)
+
+    def visit_DoWhile(self, node: c_ast.DoWhile):
+        labelStart, labelNext, labelEnd = self.getNodeLabels(node)
+
+        self._asm.emitLabel(labelStart)
+        self.visit(node.stmt)
+
+        self._asm.emitLabel(labelNext)
+        self._asm.emitCond(node.cond)
+        self._asm.emit(f"bnez a0, ${labelStart}")
+
+        self._asm.emitLabel(labelEnd)
+
+    def visit_For(self, node: c_ast.For):
+        labelStart, labelNext, labelEnd = self.getNodeLabels(node)
+
+        self.visit(node.init)
+
+        self._asm.emitLabel(labelStart)
+        if node.cond:
+            self._asm.emitCond(node.cond)
+            self._asm.emit(f"beqz a0, ${labelEnd}")
+        self.visit(node.stmt)
+
+        self._asm.emitLabel(labelNext)
+        self._asm.emit(f"j ${labelStart}")
+
+        self._asm.emitLabel(labelEnd)
+
+    def visit_Switch(self, node: c_ast.Switch):
+        self._asm.load(node.cond)
+
+        r = self.getNodeRecord(node)
+        labelDefault = None
+        for i, label in r._cases:
+            if i is not None:
+                self._asm.emit([f"li a1, {i}", f"beq a0, a1, ${label}"])
+            else:
+                labelDefault = label
+        if labelDefault is not None:
+            self._asm.emit(f"j ${labelDefault}")
+
+        self.visit(node.stmt)
+
+    def visit_Case(self, node: c_ast.Case):
+        label = self.getNodeLabels(node)[0]
+        self._asm.emitLabel(label)
+
+        for stmt in node.stmts:
+            self.visit(stmt)
+
+    def visit_Default(self, node: c_ast.Default):
+        label = self.getNodeLabels(node)[0]
+        self._asm.emitLabel(label)
+
+        for stmt in node.stmts:
+            self.visit(stmt)
+
+    def visit_Break(self, node: c_ast.Break):
+        label = self.getNodeLabels(node)[0]
+        self._asm.emit(f"j ${label}")
+
+    def visit_Continue(self, node: c_ast.Continue):
+        label = self.getNodeLabels(node)[0]
+        self._asm.emit(f"j ${label}")

@@ -314,6 +314,9 @@ class Function(Value):
         _i[0] += 1
         return f"{self._name}.{name}.{_i[0]}"
 
+    def getLocalLabel(self, name: str):
+        return f".LF.{self._name}.{name}"
+
     def getTempVarName(self, *, _i=[0]):
         _i[0] += 1
         return f"tmp.{_i[0]}"
@@ -322,13 +325,15 @@ class Function(Value):
         if offset > self._maxOffset:
             self._maxOffset = offset
 
-    def addLabel(self, label):
-        if label in self._labels:
-            raise CCError("duplicated label", label)
-        self._labels.add(label)
+    def addLabel(self, name: str):
+        if name in self._labels:
+            raise CCError("duplicated label", name)
+        self._labels.add(name)
+        return self.getLocalLabel(name)
 
-    def addGoto(self, label):
-        self._gotos.add(label)
+    def addGoto(self, name: str):
+        self._gotos.add(name)
+        return self.getLocalLabel(name)
 
     def checkLabels(self):
         s = self._gotos - self._labels
@@ -666,12 +671,14 @@ def unescapeStr(s: str) -> str:
 
 
 class NodeRecord:
-    __slots__ = ("_value", "_translated", "_visited")
+    __slots__ = ("_value", "_translated", "_visited", "_loop", "_labels", "_cases")
 
     def __init__(self, v: Value = None) -> None:
         self._value = v
         self._translated: c_ast.Node = None
         self._visited = False
+        self._labels: list[str] = None
+        self._cases: list[tuple[Optional[int], str]] = None
 
 
 class NodeVisitorCtx:
@@ -692,6 +699,10 @@ class NodeVisitorCtx:
     def getStrLabel(self, *, _i=[0]):
         _i[0] += 1
         return f".LS_{_i[0]}"
+
+    def getLocalLabel(self, name: str, *, _i=[0]):
+        _i[0] += 1
+        return f".LL_{_i[0]}.{name}"
 
 
 class NodeVisitor(c_ast.NodeVisitor):
@@ -789,6 +800,14 @@ class NodeVisitor(c_ast.NodeVisitor):
     def getNodeTranslated(self, node: c_ast.Node) -> c_ast.Node:
         r = self.getNodeRecord(node)
         return r._translated
+
+    def setNodeLabels(self, node: c_ast.Node, labels: list[str]):
+        r = self.getNodeRecord(node)
+        r._labels = [self._ctx.getLocalLabel(_) for _ in labels]
+
+    def getNodeLabels(self, node: c_ast.Node) -> list[str]:
+        r = self.getNodeRecord(node)
+        return r._labels
 
 
 class Sema(NodeVisitor):
@@ -1775,6 +1794,14 @@ class Sema(NodeVisitor):
 
     # https://en.cppreference.com/w/c/language/operator_other#Conditional_operator
     def visit_TernaryOp(self, node: c_ast.TernaryOp):
+        self.setNodeLabels(
+            node,
+            [
+                "false",
+                "end",
+            ],
+        )
+
         vC, tyC = self.tryConvertToPointer(node, "cond")
         vT, tyT = self.tryConvertToPointer(node, "iftrue")
         vF, tyF = self.tryConvertToPointer(node, "iffalse")
@@ -1871,6 +1898,14 @@ class Sema(NodeVisitor):
                 raise CCError("'return' with no value, in function returning non-void")
 
     def visit_If(self, node: c_ast.If):
+        self.setNodeLabels(
+            node,
+            [
+                "if.false",
+                "if.end",
+            ],
+        )
+
         ty = self.getNodeType(node.cond)
         match ty:
             case IntType() | PointerType():
@@ -1880,6 +1915,7 @@ class Sema(NodeVisitor):
                 raise CCError("not an integer or a pointer")
 
     def visit_While(self, node: c_ast.While):
+        self.setNodeLabels(node, ["while.start", "while.end"])
         ty = self.getNodeType(node.cond)
         match ty:
             case IntType() | PointerType():
@@ -1888,6 +1924,8 @@ class Sema(NodeVisitor):
                 raise CCError("not an integer or a pointer")
 
     def visit_DoWhile(self, node: c_ast.DoWhile):
+        self.setNodeLabels(node, ["do.start", "do.next", "do.end"])
+
         ty = self.getNodeType(node.cond)
         match ty:
             case IntType() | PointerType():
@@ -1896,6 +1934,8 @@ class Sema(NodeVisitor):
                 raise CCError("not an integer or a pointer")
 
     def visit_For(self, node: c_ast.For):
+        self.setNodeLabels(node, ["for.start", "for.next", "for.end"])
+
         self.enterScope()
 
         self.visit(node.init)
@@ -1913,7 +1953,10 @@ class Sema(NodeVisitor):
 
         self.exitScope()
 
+    # https://en.cppreference.com/w/c/language/switch
     def visit_Switch(self, node: c_ast.Switch):
+        self.setNodeLabels(node, ["switch.end"])
+
         ty = self.getNodeType(node.cond)
         match ty:
             case IntType():
@@ -1921,57 +1964,95 @@ class Sema(NodeVisitor):
             case _:
                 raise CCError("not an integer")
 
+        r = self.getNodeRecord(node)
+        r._cases = []
+
+    def getLoop(self):
+        for node in reversed(self._path[:-1]):
+            match node:
+                case c_ast.While() | c_ast.DoWhile() | c_ast.For():
+                    return node
+        return None
+
+    def getSwitch(self):
+        for node in reversed(self._path[:-1]):
+            if isinstance(node, c_ast.Switch):
+                return node
+        return None
+
+    def getLoopOrSwitch(self):
+        for node in reversed(self._path[:-1]):
+            match node:
+                case c_ast.While() | c_ast.DoWhile() | c_ast.For():
+                    return node
+                case c_ast.Switch():
+                    return node
+        return None
+
+    def addCase(self, switchStmt: Node, _case: tuple[Optional[int], str]):
+        switchR = self.getNodeRecord(switchStmt)
+        for i in switchR._cases:
+            if i == _case[0]:
+                raise CCError("duplicated case", _case)
+        switchR._cases.append(_case)
+
     def visit_Case(self, node: c_ast.Case):
-        if not isinstance(self.getParent(2), c_ast.Switch):
+        switchStmt = self.getSwitch()
+        if not isinstance(switchStmt, c_ast.Switch):
             raise CCError("invalid 'case'")
 
-        ty = self.getNodeType(node.expr)
-        match ty:
-            case IntType():
+        v = self.getNodeValue(node.expr)
+        match v:
+            case IntConstant():
+                if v.getType().size() == 8:
+                    raise CCNotImplemented("case value of size 8")
+
+                self.setNodeLabels(node, ["switch.case"])
+                self.addCase(switchStmt, (v._i, self.getNodeLabels(node)[0]))
+
                 for stmt in node.stmts:
                     self.visit(stmt)
             case _:
-                raise CCError("not an integer")
+                raise CCError("not an integer constant")
 
     def visit_Default(self, node: c_ast.Default):
-        if not isinstance(self.getParent(2), c_ast.Switch):
+        switchStmt = self.getSwitch()
+        if not isinstance(switchStmt, c_ast.Switch):
             raise CCError("invalid 'default'")
+
+        self.setNodeLabels(node, ["switch.default"])
+        self.addCase(switchStmt, (None, self.getNodeLabels(node)[0]))
 
         for stmt in node.stmts:
             self.visit(stmt)
 
-    def visit_Break(self, _: c_ast.Break):
-        def _check():
-            for x in reversed(self._path[:-1]):
-                match x:
-                    case c_ast.While() | c_ast.DoWhile() | c_ast.For():
-                        return True
-                    case c_ast.Case() | c_ast.Default():
-                        return True
-            return False
-
-        if not _check():
+    def visit_Break(self, node: c_ast.Break):
+        loopOrSwitchStmt = self.getLoopOrSwitch()
+        if not loopOrSwitchStmt:
             raise CCError("invalid 'break'")
+        labelEnd = self.getNodeLabels(loopOrSwitchStmt)[-1]
+        self.setNodeLabels(node, [labelEnd])
 
-    def visit_Continue(self, _: c_ast.Continue):
-        def _check():
-            for x in reversed(self._path[:-1]):
-                match x:
-                    case c_ast.While() | c_ast.DoWhile() | c_ast.For():
-                        return True
-            return False
-
-        if not _check():
+    def visit_Continue(self, node: c_ast.Continue):
+        loopStmt = self.getLoop()
+        if not loopStmt:
             raise CCError("invalid 'continue'")
+
+        if isinstance(loopStmt, c_ast.While):
+            labelNext = self.getNodeLabels(loopStmt)[0]
+        else:
+            labelNext = self.getNodeLabels(loopStmt)[1]
+        self.setNodeLabels(node, [labelNext])
 
     def visit_Label(self, node: c_ast.Label):
         if self._func is None:
             raise CCError("unexpected label")
-        self._func.addLabel(node.name)
+        self.setNodeLabels(node, [self._func.addLabel(node.name)])
+
         self.visit(node.stmt)
 
     def visit_Goto(self, node: c_ast.Goto):
-        self._func.addGoto(node.name)
+        self.setNodeLabels(node, [self._func.addGoto(node.name)])
 
     # https://en.cppreference.com/w/c/language/_Static_assert
     def visit_StaticAssert(self, node: c_ast.StaticAssert):
