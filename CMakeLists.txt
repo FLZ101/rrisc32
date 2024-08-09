@@ -19,8 +19,4 @@ add_custom_target(setup_python
     COMMAND ./setup_python.sh
 )
 
-include_directories(include)
-
-add_subdirectory(lib)
-add_subdirectory(tools)
-add_subdirectory(test EXCLUDE_FROM_ALL)
+add_subdirectory(rrisc32)

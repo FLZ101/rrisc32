@@ -2063,3 +2063,7 @@ class Sema(NodeVisitor):
                     raise CCError("static assertion failed", node.message)
             case _:
                 raise CCError("not an integer constant or a pointer constant")
+
+    # https://en.cppreference.com/w/c/preprocessor/impl
+    def visit_Pragma(self, node: c_ast.Pragma):
+        pass
