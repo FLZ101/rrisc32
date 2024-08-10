@@ -34,7 +34,7 @@ def mkdtemp(suffix: str):
 
 
 class Action:
-    def getOutfile(self):
+    def getOutfile(self) -> str:
         raise NotImplementedError()
 
 
@@ -62,9 +62,10 @@ def once(func):
 
 
 class CompileAction(Action):
-    def __init__(self, inact: Action, outfile: str = None) -> None:
+    def __init__(self, inact: Action, outfile: str = None, cpp_args: list[str] = []) -> None:
         self._inact = inact
         self._outfile = outfile
+        self._cpp_args = cpp_args
 
     @once
     def run(self):
@@ -73,7 +74,8 @@ class CompileAction(Action):
             assert infile.endswith(".c")
             self._outfile = infile[:-2] + ".s"
 
-        ast = parse_file(infile, use_cpp=True, cpp_args=["-nostdinc", f"-I{incDir}"])
+        cpp_args = ["-nostdinc", f"-I{incDir}"] + self._cpp_args
+        ast = parse_file(infile, use_cpp=True, cpp_args=cpp_args)
 
         ctx = NodeVisitorCtx()
         sm = Sema(ctx)
@@ -183,6 +185,7 @@ class ArchiveAction(MIAction):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--include", metavar="<incdir>", action="append")
     parser.add_argument(
         "--compile", action="store_true", help="Compile only; do not assemble or link."
     )
@@ -199,6 +202,10 @@ def main():
     args = parser.parse_args()
     infiles: list[str] = args.infiles
 
+    cpp_args = []
+    for incdir in args.include:
+        cpp_args.append(f"-I{incdir}")
+
     for infile in infiles:
         if infile[-2:] in [".c", ".s", ".o", ".a"]:
             continue
@@ -214,11 +221,11 @@ def main():
 
             infile = infiles[0]
             if infile.endswith(".c"):
-                actions.append(CompileAction(InputAction(infile), args.o))
+                actions.append(CompileAction(InputAction(infile), args.o, cpp_args))
         else:
             for infile in infiles:
                 if infile.endswith(".c"):
-                    actions.append(CompileAction(InputAction(infile)))
+                    actions.append(CompileAction(InputAction(infile), None, cpp_args))
 
     elif args.assemble:
         if args.o:
@@ -230,14 +237,18 @@ def main():
             infile = infiles[0]
             if infile.endswith(".c"):
                 actions.append(
-                    AssembleAction(CompileAction(InputAction(infile), mktemp(".s")), args.o)
+                    AssembleAction(
+                        CompileAction(InputAction(infile), mktemp(".s"), cpp_args), args.o
+                    )
                 )
             elif infile.endswith(".s"):
                 actions.append(AssembleAction(InputAction(infile), args.o))
         else:
             for infile in infiles:
                 if infile.endswith(".c"):
-                    actions.append(AssembleAction(CompileAction(InputAction(infile), mktemp(".s"))))
+                    actions.append(
+                        AssembleAction(CompileAction(InputAction(infile), mktemp(".s"), cpp_args))
+                    )
                 elif infile.endswith(".s"):
                     actions.append(AssembleAction(InputAction(infile)))
 
@@ -250,7 +261,7 @@ def main():
             if infile.endswith(".c"):
                 inacts.append(
                     AssembleAction(
-                        CompileAction(InputAction(infile), mktemp(".s")),
+                        CompileAction(InputAction(infile), mktemp(".s"), cpp_args),
                         mktemp(".o"),
                     )
                 )
