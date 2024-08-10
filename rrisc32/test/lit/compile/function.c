@@ -3,9 +3,15 @@
 
 static void f1() {}
 
+// declaration
+int f2();
+// definition
 int f2() { return 1; }
 
+// definition
 int f3(int i, int j, int k) { return k; }
+// declaration
+int f3(int i, int j, int k);
 
 // CC:          .text
 // CC-NEXT:

@@ -301,9 +301,10 @@ defined for pointers to functions and not for function designators themselves.
 
 
 class Function(Value):
-    def __init__(self, name: str, ty: FunctionType) -> None:
+    def __init__(self, name: str, ty: FunctionType, defined: bool = False) -> None:
         super().__init__(ty)
         self._name = name
+        self._defined = defined
 
         self._maxOffset = 0
 
@@ -723,12 +724,16 @@ class NodeVisitor(c_ast.NodeVisitor):
     def visit(self, node: Optional[c_ast.Node]):
         if not node:
             return
-        try:
-            assert not isinstance(node, Node)
+        assert not isinstance(node, Node)
 
-            self._path.append(node)
-            super().visit(node)
-            self._path.pop()
+        self._path.append(node)
+        super().visit(node)
+        self._path.pop()
+
+    def visit_FileAST(self, node: c_ast.FileAST):
+        try:
+            for ext in node.ext:
+                self.visit(ext)
         except CCError as ex:
 
             def formatNode(node: c_ast.Node):
@@ -737,7 +742,6 @@ class NodeVisitor(c_ast.NodeVisitor):
                     getattr(node, "coord", ""),
                 )
 
-            print(traceback.format_exc())
             print("%s : %s" % (formatNode(self._path[-1]), ex))
             for i, _ in enumerate(reversed(self._path[1:-1])):
                 print("%s%s" % ("  " * (i + 1), formatNode(_)))
@@ -1066,6 +1070,18 @@ class Sema(NodeVisitor):
             self.setNodeValue(node, v)
 
         if isinstance(ty, FunctionType):
+            defined = isinstance(self.getParent(), c_ast.FuncDef)
+            match self._scope.findSymbol(node.name):
+                case Function() as func if isCompatible(ty, func.getType()):
+                    self.setNodeValue(node, func)
+
+                    if func._defined:
+                        if not defined:
+                            return
+                    else:
+                        func._defined = defined
+                        return
+
             _addSymbol(Function(node.name, ty))
             return
 
