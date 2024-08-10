@@ -500,12 +500,25 @@ class Asm:
         if ty.size() == 8:
             self.emit(f"pop {r2}")
 
-    def emitCond(self, node: c_ast.Node):
-        self.load(node)
+    def emitCond(self, node: c_ast.Node, label: str, eq: bool = True):
+        r = self._cg.getNodeRecord(node)
+        v = r._value
+        match v:
+            case IntConstant():
+                c = v._i == 0
+                if c == eq:
+                    self.emit(f"j {label}")
+            case _:
+                self.load(node)
 
-        ty = self._cg.getNodeType(node)
-        if ty.size() == 8:
-            self.emit("or a0, a0, a1")
+                ty = v.getType()
+                if ty.size() == 8:
+                    self.emit("or a0, a0, a1")
+
+                if eq:
+                    self.emit(f"beqz a0, {label}")
+                else:
+                    self.emit(f"bnez a0, {label}")
 
     def emitPrelogue(self):
         self.emit(["push ra", "push fp", "mv fp, sp"])
@@ -1197,8 +1210,7 @@ class Codegen(NodeVisitor):
     def visit_TernaryOp(self, node: c_ast.TernaryOp):
         labelFalse, labelEnd = self.getNodeLabels(node)
 
-        self._asm.emitCond(node.cond)
-        self._asm.emit(f"beqz a0, ${labelFalse}")
+        self._asm.emitCond(node.cond, labelFalse)
 
         self._asm.load(node.iftrue)
         self._asm.emit(f"j ${labelEnd}")
@@ -1223,8 +1235,7 @@ class Codegen(NodeVisitor):
     def visit_If(self, node: c_ast.If):
         labelFalse, labelEnd = self.getNodeLabels(node)
 
-        self._asm.emitCond(node.cond)
-        self._asm.emit(f"beqz a0, ${labelFalse}")
+        self._asm.emitCond(node.cond, labelFalse)
 
         self.visit(node.iftrue)
         self._asm.emit(f"j ${labelEnd}")
@@ -1238,8 +1249,7 @@ class Codegen(NodeVisitor):
         labelStart, labelEnd = self.getNodeLabels(node)
 
         self._asm.emitLabel(labelStart)
-        self._asm.emitCond(node.cond)
-        self._asm.emit(f"beqz a0, ${labelEnd}")
+        self._asm.emitCond(node.cond, labelEnd)
 
         self.visit(node.stmt)
         self._asm.emit(f"j ${labelStart}")
@@ -1253,8 +1263,7 @@ class Codegen(NodeVisitor):
         self.visit(node.stmt)
 
         self._asm.emitLabel(labelNext)
-        self._asm.emitCond(node.cond)
-        self._asm.emit(f"bnez a0, ${labelStart}")
+        self._asm.emitCond(node.cond, labelStart, False)
 
         self._asm.emitLabel(labelEnd)
 
@@ -1265,8 +1274,7 @@ class Codegen(NodeVisitor):
 
         self._asm.emitLabel(labelStart)
         if node.cond:
-            self._asm.emitCond(node.cond)
-            self._asm.emit(f"beqz a0, ${labelEnd}")
+            self._asm.emitCond(node.cond, labelEnd)
         self.visit(node.stmt)
 
         self._asm.emitLabel(labelNext)
