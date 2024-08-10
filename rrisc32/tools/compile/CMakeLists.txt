@@ -6,4 +6,5 @@ add_custom_command(
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/build.sh
     DEPENDS setup_python main.py sema.py codegen.py requirements.txt
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-add_custom_target(rrisc32-compile DEPENDS ${CMAKE_BINARY_DIR}/bin/rrisc32-cc)
+add_custom_target(rrisc32-compile ALL
+    DEPENDS ${CMAKE_BINARY_DIR}/bin/rrisc32-cc)

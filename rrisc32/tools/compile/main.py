@@ -25,12 +25,16 @@ libDir = os.path.join(sysroot, "lib")
 tmpDir = os.path.join(sysroot, "tmp")
 
 
-def mktemp(suffix: str):
-    return tempfile.mktemp(suffix=suffix, dir=tmpDir)
+def mktemp(suffix: str, prefix: str):
+    prefix = os.path.basename(prefix)
+    os.makedirs(tmpDir, exist_ok=True)
+    return tempfile.mktemp(suffix=suffix, prefix=prefix, dir=tmpDir)
 
 
-def mkdtemp(suffix: str):
-    return tempfile.mkdtemp(suffix=suffix, dir=tmpDir)
+def mkdtemp(suffix: str, prefix: str):
+    prefix = os.path.basename(prefix)
+    os.makedirs(tmpDir, exist_ok=True)
+    return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=tmpDir)
 
 
 class Action:
@@ -122,7 +126,7 @@ def archive(infiles: list[str], outfile: str):
 
 def extract(infile: str) -> list[str]:
     with tarfile.open(infile, "r|") as tf:
-        outdir = mkdtemp(".a")
+        outdir = mkdtemp(".extracted", infile)
         tf.extractall(outdir)
         outfiles = glob.glob(os.path.join(outdir, "*.o"))
         return outfiles
@@ -203,7 +207,7 @@ def main():
     infiles: list[str] = args.infiles
 
     cpp_args = []
-    for incdir in args.include:
+    for incdir in args.include or []:
         cpp_args.append(f"-I{incdir}")
 
     for infile in infiles:
@@ -238,7 +242,7 @@ def main():
             if infile.endswith(".c"):
                 actions.append(
                     AssembleAction(
-                        CompileAction(InputAction(infile), mktemp(".s"), cpp_args), args.o
+                        CompileAction(InputAction(infile), mktemp(".s", infile), cpp_args), args.o
                     )
                 )
             elif infile.endswith(".s"):
@@ -247,7 +251,9 @@ def main():
             for infile in infiles:
                 if infile.endswith(".c"):
                     actions.append(
-                        AssembleAction(CompileAction(InputAction(infile), mktemp(".s"), cpp_args))
+                        AssembleAction(
+                            CompileAction(InputAction(infile), mktemp(".s", infile), cpp_args)
+                        )
                     )
                 elif infile.endswith(".s"):
                     actions.append(AssembleAction(InputAction(infile)))
@@ -261,12 +267,12 @@ def main():
             if infile.endswith(".c"):
                 inacts.append(
                     AssembleAction(
-                        CompileAction(InputAction(infile), mktemp(".s"), cpp_args),
-                        mktemp(".o"),
+                        CompileAction(InputAction(infile), mktemp(".s", infile), cpp_args),
+                        mktemp(".o", infile),
                     )
                 )
             elif infile.endswith(".s"):
-                inacts.append(AssembleAction(InputAction(infile), mktemp(".o")))
+                inacts.append(AssembleAction(InputAction(infile), mktemp(".o", infile)))
             elif infile.endswith(".o"):
                 inacts.append(InputAction(infile))
             elif infile.endswith(".a"):

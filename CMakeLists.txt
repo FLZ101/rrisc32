@@ -20,3 +20,4 @@ add_custom_target(setup_python
 )
 
 add_subdirectory(rrisc32)
+add_subdirectory(libc)

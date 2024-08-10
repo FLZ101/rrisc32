@@ -47,9 +47,9 @@ private:
   void syscallClose();
   void syscallRead();
   void syscallWrite();
-  void syscallSeek();
+  void syscallLseek();
 
-  void syscallBrk();
+  void syscallSbrk();
 
   void syscallSleep();
 
@@ -77,8 +77,8 @@ private:
     std::mem_fn(&Emulator::syscallClose),
     std::mem_fn(&Emulator::syscallRead),
     std::mem_fn(&Emulator::syscallWrite),
-    std::mem_fn(&Emulator::syscallSeek),
-    std::mem_fn(&Emulator::syscallBrk),
+    std::mem_fn(&Emulator::syscallLseek),
+    std::mem_fn(&Emulator::syscallSbrk),
     std::mem_fn(&Emulator::syscallSleep)
   };
   // clang-format on
@@ -149,11 +149,14 @@ void Emulator::syscallRead() {
   if (!count || !fp)
     RET(0);
 
-  u32 i = 0;
+  s32 i = 0;
   for (; i < count; ++i) {
     int c = std::fgetc(fp);
-    if (c == EOF)
+    if (c == EOF) {
+      if (std::ferror(fp) && i == 0)
+        i = -1;
       break;
+    }
     wm<u8>(buf + i, c);
   }
   RET(i);
@@ -167,16 +170,19 @@ void Emulator::syscallWrite() {
   if (!count || !fp)
     RET(0);
 
-  u32 i = 0;
+  s32 i = 0;
   for (; i < count; ++i) {
     u8 c = rm<u8>(buf + i);
-    if (EOF == std::fputc(c, fp))
+    if (EOF == std::fputc(c, fp)) {
+      if (std::ferror(fp) && i == 0)
+        i = -1;
       break;
+    }
   }
   RET(i);
 }
 
-void Emulator::syscallSeek() {
+void Emulator::syscallLseek() {
   s32 fd = rArg(1);
   s32 offset = rArg(2);
   s32 whence = rArg(3);
@@ -200,7 +206,7 @@ void Emulator::syscallSeek() {
   RET(ftell(fp));
 }
 
-void Emulator::syscallBrk() {
+void Emulator::syscallSbrk() {
   s32 inc = rArg(1);
   if (!checkHeap(inc + heapTop))
     RET(-1);
@@ -211,7 +217,6 @@ void Emulator::syscallBrk() {
 
 void Emulator::syscallSleep() {
   std::this_thread::sleep_for(std::chrono::milliseconds(rArg(1)));
-  wRet(0);
 }
 
 std::FILE *Emulator::checkFD(s32 fd) {
@@ -253,6 +258,12 @@ bool Emulator::checkStack(u32 st) {
 }
 
 bool Emulator::checkStack() { return checkStack(getStackTop()); }
+
+// system calling convention:
+//
+//      a0  system call number
+//   a1-a7  arguments
+//      a0  return value
 
 void Emulator::wRet(s32 value) { wr(Reg::a0, value); }
 
