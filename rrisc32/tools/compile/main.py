@@ -2,8 +2,9 @@ import os
 import sys
 import argparse
 import subprocess
-
-from tempfile import mktemp
+import tarfile
+import glob
+import tempfile
 
 from pycparser import parse_file
 
@@ -19,28 +20,35 @@ def get_sysroot():
 
 sysroot = get_sysroot()
 binDir = os.path.join(sysroot, "bin")
-includeDir = os.path.join(sysroot, "include")
+incDir = os.path.join(sysroot, "include")
 libDir = os.path.join(sysroot, "lib")
+tmpDir = os.path.join(sysroot, "tmp")
+
+
+def mktemp(suffix: str):
+    return tempfile.mktemp(suffix=suffix, dir=tmpDir)
+
+
+def mkdtemp(suffix: str):
+    return tempfile.mkdtemp(suffix=suffix, dir=tmpDir)
 
 
 class Action:
-    def __init__(self, outfile: str) -> None:
-        self._outfile = outfile
-
-    def run(self) -> None:
+    def getOutfile(self):
         raise NotImplementedError()
 
-    def getOutfile(self):
-        self.run()
-        return self._outfile
+
+class MOAction:
+    def getOutfiles(self) -> list[str]:
+        raise NotImplementedError()
 
 
 class InputAction(Action):
     def __init__(self, outfile: str) -> None:
-        super().__init__(outfile)
+        self._outfile = outfile
 
-    def run(self):
-        pass
+    def getOutfile(self):
+        return self._outfile
 
 
 def once(func):
@@ -55,8 +63,8 @@ def once(func):
 
 class CompileAction(Action):
     def __init__(self, inact: Action, outfile: str = None) -> None:
-        super().__init__(outfile)
         self._inact = inact
+        self._outfile = outfile
 
     @once
     def run(self):
@@ -65,7 +73,7 @@ class CompileAction(Action):
             assert infile.endswith(".c")
             self._outfile = infile[:-2] + ".s"
 
-        ast = parse_file(infile, use_cpp=True, cpp_args=["-nostdinc", f"-I{includeDir}"])
+        ast = parse_file(infile, use_cpp=True, cpp_args=["-nostdinc", f"-I{incDir}"])
 
         ctx = NodeVisitorCtx()
         sm = Sema(ctx)
@@ -77,11 +85,15 @@ class CompileAction(Action):
         with open(self._outfile, "w") as ofs:
             cg.save(ofs)
 
+    def getOutfile(self):
+        self.run()
+        return self._outfile
+
 
 class AssembleAction(Action):
     def __init__(self, inact: Action, outfile: str = None) -> None:
-        super().__init__(outfile)
         self._inact = inact
+        self._outfile = outfile
 
     @once
     def run(self):
@@ -93,17 +105,80 @@ class AssembleAction(Action):
         exe = os.path.join(binDir, "rrisc32-as")
         subprocess.run([exe, "-o", self._outfile, infile])
 
+    def getOutfile(self):
+        self.run()
+        return self._outfile
 
-class LinkAction(Action):
-    def __init__(self, inacts: list[Action], outfile: str) -> None:
-        super().__init__(outfile)
+
+def archive(infiles: list[str], outfile: str):
+    with tarfile.open(outfile, "w|") as tf:
+        for infile in infiles:
+            name = os.path.basename(infile)
+            with open(infile) as ifs:
+                tf.addfile(tarfile.TarInfo(name), ifs)
+
+
+def extract(infile: str) -> list[str]:
+    with tarfile.open(infile, "r|") as tf:
+        outdir = mkdtemp(".a")
+        tf.extractall(outdir)
+        outfiles = glob.glob(os.path.join(outdir, "*.o"))
+        return outfiles
+
+
+class ExtractAction(MOAction):
+    def __init__(self, inact: Action) -> None:
+        self._inact = inact
+
+    def getOutfiles(self) -> list[str]:
+        infile = self._inact.getOutfile()
+        outfiles = extract(infile)
+        return outfiles
+
+
+class MIAction(Action):
+    def __init__(self, inacts: list[Action | MOAction], outfile: str) -> None:
         self._inacts = inacts
+        self._outfile = outfile
+
+    def getInfiles(self) -> list[str]:
+        infiles = []
+        for inact in self._inacts:
+            match inact:
+                case Action():
+                    infiles.append(inact.getOutfile())
+                case MOAction():
+                    infiles.extend(inact.getOutfiles())
+        return infiles
+
+
+class LinkAction(MIAction):
+    def __init__(self, inacts: list[Action | MOAction], outfile: str) -> None:
+        super().__init__(inacts, outfile)
 
     @once
     def run(self):
-        infiles = [inact.getOutfile() for inact in self._inacts]
+        infiles = self.getInfiles()
         exe = os.path.join(binDir, "rrisc32-link")
         subprocess.run([exe, "-o", self._outfile, " ".join(infiles)])
+
+    def getOutfile(self):
+        self.run()
+        return self._outfile
+
+
+class ArchiveAction(MIAction):
+    def __init__(self, inacts: list[Action | MOAction], outfile: str) -> None:
+        super().__init__(inacts, outfile)
+
+    @once
+    def run(self):
+        infiles = self.getInfiles()
+        archive(infiles, self._outfile)
+
+    def getOutfile(self):
+        self.run()
+        return self._outfile
 
 
 def main():
@@ -114,6 +189,9 @@ def main():
     parser.add_argument(
         "--assemble", action="store_true", help="Compile and assemble, but do not link."
     )
+    parser.add_argument(
+        "--archive", action="store_true", help="Create a static library rather than an executable."
+    )
     parser.add_argument("--optimize", action="store_true", help="Enable optimizations.")
     parser.add_argument("-o", metavar="<outfile>")
     parser.add_argument("infiles", metavar="<infile>", nargs="+")
@@ -122,9 +200,9 @@ def main():
     infiles: list[str] = args.infiles
 
     for infile in infiles:
-        if infile.endswith(".c") or infile.endswith(".s") or infile.endswith(".o"):
+        if infile[-2:] in [".c", ".s", ".o", ".a"]:
             continue
-        raise Exception("input files should be *.c, *.s or *.o")
+        raise Exception("input files should be *.c, *.s, *.o or *.a")
 
     actions: list[Action] = []
     if args.compile:
@@ -167,21 +245,26 @@ def main():
         if not args.o:
             raise Exception("expect an output file")
 
-        arr = []
+        inacts = []
         for infile in infiles:
             if infile.endswith(".c"):
-                arr.append(
+                inacts.append(
                     AssembleAction(
                         CompileAction(InputAction(infile), mktemp(".s")),
                         mktemp(".o"),
                     )
                 )
             elif infile.endswith(".s"):
-                arr.append(AssembleAction(InputAction(infile), mktemp(".o")))
+                inacts.append(AssembleAction(InputAction(infile), mktemp(".o")))
             elif infile.endswith(".o"):
-                arr.append(InputAction(infile))
+                inacts.append(InputAction(infile))
+            elif infile.endswith(".a"):
+                inacts.append(ExtractAction(InputAction(infile)))
 
-        actions.append(LinkAction(arr, args.o))
+        if args.archive:
+            actions.append(ArchiveAction(inacts, args.o))
+        else:
+            actions.append(LinkAction(inacts, args.o))
 
     for act in actions:
         act.run()
