@@ -49,14 +49,14 @@ void h(int i) {
 // CC-NEXT: .LL_5.if.false:
 // CC-NEXT:     call $g
 // CC-NEXT: .LL_6.if.end:
-// CC-NEXT:     j .LL_7.if.false
+// CC-NEXT:     j $.LL_7.if.false
 // CC-NEXT:     call $f
 // CC-NEXT:     j $.LL_8.if.end
 // CC-NEXT: .LL_7.if.false:
 // CC-NEXT:     call $g
 // CC-NEXT: .LL_8.if.end:
 // CC-NEXT:     lw a0, fp, 8
-// CC-NEXT:     beqz a0, .LL_9.if.false
+// CC-NEXT:     beqz a0, $.LL_9.if.false
 // CC-NEXT:     call $f
 // CC-NEXT:     j $.LL_10.if.end
 // CC-NEXT: .LL_9.if.false:

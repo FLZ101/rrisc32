@@ -16,7 +16,7 @@ int h(int i) {
 // CC-NEXT:     push fp
 // CC-NEXT:     mv fp, sp
 // CC-NEXT:     lw a0, fp, 8
-// CC-NEXT:     beqz a0, .LL_1.false
+// CC-NEXT:     beqz a0, $.LL_1.false
 // CC-NEXT:     call $f
 // CC-NEXT:     j $.LL_2.end
 // CC-NEXT: .LL_1.false:

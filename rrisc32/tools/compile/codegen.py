@@ -507,7 +507,7 @@ class Asm:
             case IntConstant():
                 c = v._i == 0
                 if c == eq:
-                    self.emit(f"j {label}")
+                    self.emit(f"j ${label}")
             case _:
                 self.load(node)
 
@@ -516,9 +516,9 @@ class Asm:
                     self.emit("or a0, a0, a1")
 
                 if eq:
-                    self.emit(f"beqz a0, {label}")
+                    self.emit(f"beqz a0, ${label}")
                 else:
-                    self.emit(f"bnez a0, {label}")
+                    self.emit(f"bnez a0, ${label}")
 
     def emitPrelogue(self):
         self.emit(["push ra", "push fp", "mv fp, sp"])

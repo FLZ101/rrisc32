@@ -39,7 +39,7 @@ void h(int i, int j) {
 // CC-NEXT: .LL_2.switch.case:
 // CC-NEXT:     call $d
 // CC-NEXT:     lw a0, fp, 12
-// CC-NEXT:     beqz a0, .LL_3.if.false
+// CC-NEXT:     beqz a0, $.LL_3.if.false
 // CC-NEXT: .LL_5.switch.case:
 // CC-NEXT:     call $e
 // CC-NEXT:     j $.LL_1.switch.end

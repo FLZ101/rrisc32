@@ -51,7 +51,7 @@ void g(int i) {
 // CC-NEXT:     lw a0, fp, -4
 // CC-NEXT:     pop a2
 // CC-NEXT:     slt a0, a0, a2
-// CC-NEXT:     beqz a0, .LL_9.for.end
+// CC-NEXT:     beqz a0, $.LL_9.for.end
 // CC-NEXT:     call $f
 // CC-NEXT: .LL_8.for.next:
 // CC-NEXT:     li a0, 1

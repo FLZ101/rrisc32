@@ -32,7 +32,7 @@ void g(int i) {
 // CC-NEXT:     mv fp, sp
 // CC-NEXT: .LL_1.while.start:
 // CC-NEXT:     lw a0, fp, 8
-// CC-NEXT:     beqz a0, .LL_2.while.end
+// CC-NEXT:     beqz a0, $.LL_2.while.end
 // CC-NEXT:     call $f
 // CC-NEXT:     j $.LL_1.while.start
 // CC-NEXT:     call $f
@@ -44,11 +44,11 @@ void g(int i) {
 // CC-NEXT:     call $f
 // CC-NEXT: .LL_4.do.next:
 // CC-NEXT:     lw a0, fp, 8
-// CC-NEXT:     bnez a0, .LL_3.do.start
+// CC-NEXT:     bnez a0, $.LL_3.do.start
 // CC-NEXT: .LL_5.do.end:
 // CC-NEXT: .LL_6.for.start:
 // CC-NEXT:     lw a0, fp, 8
-// CC-NEXT:     beqz a0, .LL_8.for.end
+// CC-NEXT:     beqz a0, $.LL_8.for.end
 // CC-NEXT:     call $f
 // CC-NEXT:     j $.LL_7.for.next
 // CC-NEXT:     call $f

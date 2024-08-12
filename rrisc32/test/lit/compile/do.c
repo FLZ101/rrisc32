@@ -31,13 +31,13 @@ void g(int i) {
 // CC-NEXT: .LL_4.do.start:
 // CC-NEXT:     call $f
 // CC-NEXT: .LL_5.do.next:
-// CC-NEXT:     j .LL_4.do.start
+// CC-NEXT:     j $.LL_4.do.start
 // CC-NEXT: .LL_6.do.end:
 // CC-NEXT: .LL_7.do.start:
 // CC-NEXT:     call $f
 // CC-NEXT: .LL_8.do.next:
 // CC-NEXT:     lw a0, fp, 8
-// CC-NEXT:     bnez a0, .LL_7.do.start
+// CC-NEXT:     bnez a0, $.LL_7.do.start
 // CC-NEXT: .LL_9.do.end:
 // CC-NEXT:     mv sp, fp
 // CC-NEXT:     pop fp

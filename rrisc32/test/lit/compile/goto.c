@@ -22,7 +22,7 @@ end:;
 // CC-NEXT: .LF.g.start:
 // CC-NEXT:     call $f
 // CC-NEXT:     lw a0, fp, 8
-// CC-NEXT:     beqz a0, .LL_1.if.false
+// CC-NEXT:     beqz a0, $.LL_1.if.false
 // CC-NEXT:     j $.LF.g.end
 // CC-NEXT:     j $.LL_2.if.end
 // CC-NEXT: .LL_1.if.false:

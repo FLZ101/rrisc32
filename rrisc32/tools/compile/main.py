@@ -49,12 +49,10 @@ class InputAction(Action):
 
 
 def once(func):
-    def _f(*args, **kwargs):
-        if not _f.done:
-            _f.done = True
-            func(*args, **kwargs)
-
-    _f.done = False
+    def _f(self, *args, **kwargs):
+        if not getattr(self, '_done', False):
+            self._done = True
+            func(self, *args, **kwargs)
     return _f
 
 
