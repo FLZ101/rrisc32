@@ -748,7 +748,8 @@ class NodeVisitor(c_ast.NodeVisitor):
             raise
 
     def getNodeRecord(self, node: c_ast.Node) -> NodeRecord | Node:
-        assert not isinstance(node, Node)
+        if isinstance(node, Node):
+            return node
 
         if node not in self._records:
             self._records[node] = NodeRecord()
@@ -1440,6 +1441,7 @@ class Sema(NodeVisitor):
                 raise CCError(f"can not assign {tyL}")
 
     # https://en.cppreference.com/w/c/language/expressions
+    # https://en.cppreference.com/w/c/language/operator_precedence
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
         match node.op:
             case "sizeof":
@@ -1709,6 +1711,21 @@ class Sema(NodeVisitor):
                                         unreachable()
                                 self.setNodeValue(node, getIntConstant(i, "int"))
                             case _:
+                                match node.op:
+                                    case '&&':
+                                        # translate expr1 && expr2 into
+                                        # if (expr1) goto end;
+                                        # expr2
+                                        # end;
+                                        pass
+                                    case '||':
+                                        pass
+                                    case _:
+                                        unreachable()
+                                # expr1 && expr2
+                                # if (expr1)
+                                # goto end
+                                # expr2
                                 self.setNodeTypeR(node, getBuiltinType("int"))
                     case _:
                         raise CCError(f"can not {node.op} {tyL} and {tyR}")
@@ -1886,7 +1903,7 @@ class Sema(NodeVisitor):
         match ty:
             case PointerType(_base=FunctionType()):
                 tyF: FunctionType = ty._base
-                args: list[c_ast.Node] = node.args.exprs
+                args: list[c_ast.Node] = node.args.exprs if node.args else []
 
                 if len(args) < len(tyF._args):
                     raise CCError("too few arguments to function call")
@@ -1974,15 +1991,15 @@ class Sema(NodeVisitor):
     def visit_Switch(self, node: c_ast.Switch):
         self.setNodeLabels(node, ["switch.end"])
 
+        r = self.getNodeRecord(node)
+        r._cases = []
+
         ty = self.getNodeType(node.cond)
         match ty:
             case IntType():
                 self.visit(node.stmt)
             case _:
                 raise CCError("not an integer")
-
-        r = self.getNodeRecord(node)
-        r._cases = []
 
     def getLoop(self):
         for node in reversed(self._path[:-1]):
@@ -2048,7 +2065,8 @@ class Sema(NodeVisitor):
         if not loopOrSwitchStmt:
             raise CCError("invalid 'break'")
         labelEnd = self.getNodeLabels(loopOrSwitchStmt)[-1]
-        self.setNodeLabels(node, [labelEnd])
+        r = self.getNodeRecord(node)
+        r._labels = [labelEnd]
 
     def visit_Continue(self, node: c_ast.Continue):
         loopStmt = self.getLoop()
@@ -2059,17 +2077,20 @@ class Sema(NodeVisitor):
             labelNext = self.getNodeLabels(loopStmt)[0]
         else:
             labelNext = self.getNodeLabels(loopStmt)[1]
-        self.setNodeLabels(node, [labelNext])
+        r = self.getNodeRecord(node)
+        r._labels = [labelNext]
 
     def visit_Label(self, node: c_ast.Label):
         if self._func is None:
             raise CCError("unexpected label")
-        self.setNodeLabels(node, [self._func.addLabel(node.name)])
+        r = self.getNodeRecord(node)
+        r._labels = [self._func.addLabel(node.name)]
 
         self.visit(node.stmt)
 
     def visit_Goto(self, node: c_ast.Goto):
-        self.setNodeLabels(node, [self._func.addGoto(node.name)])
+        r = self.getNodeRecord(node)
+        r._labels = [self._func.addGoto(node.name)]
 
     # https://en.cppreference.com/w/c/language/_Static_assert
     def visit_StaticAssert(self, node: c_ast.StaticAssert):

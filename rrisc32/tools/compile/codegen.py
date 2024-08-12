@@ -944,22 +944,32 @@ class Codegen(NodeVisitor):
                 unreachable()
 
     def visit_UnaryOp(self, node: c_ast.UnaryOp):
-        v, ty = self.getNodeValueType(node.expr)
         match node.op:
             case "&":
+                v = self.getNodeValue(node.expr)
                 self.setNodeValue(node, self._asm.addressOf(v))
+                return
 
             case "*":
+                v = self.getNodeValue(node.expr)
                 self.setNodeValue(node, MemoryAccess(v))
+                return
 
+        ty = self.getNodeType(node.expr)
+
+        if self.getNodeTranslated(node):
+            self.translate(node)
+            self.setNodeValue(node, TemporaryValue(ty))
+            return
+
+        self._asm.load(node.expr)
+        match node.op:
             case "+":
                 pass
 
             case "-":
-                if ty.size() == 8:
-                    self.translate(node)
-                else:
-                    self._asm.emit("neg a0,a0")
+                assert ty.size() != 8
+                self._asm.emit("neg a0, a0")
 
             case "~":
                 if ty.size() == 8:
@@ -968,22 +978,23 @@ class Codegen(NodeVisitor):
 
             case "!":
                 if ty.size() == 8:
-                    self._asm.emit(["or a0, a0, a1", "seqz a0, a0", "li a1, 0"])
-                else:
-                    self._asm.emit("seqz a0, a0")
+                    self._asm.emit("or a0, a0, a1")
+                self._asm.emit("seqz a0, a0")
 
             case "++" | "--" | "p++" | "p--":
-                self.translate(node)
+                unreachable()
 
             case _:
                 unreachable()
 
+        self.setNodeValue(node, TemporaryValue(self.getNodeType(node)))
+
     def visit_BinaryOp(self, node: c_ast.BinaryOp):
-        ty = self.getNodeType(node)
+        # ty = self.getNodeType(node)
         tyL = self.getNodeType(node.left)
         tyR = self.getNodeType(node.right)
 
-        assert ty.size() == tyL.size() == tyR.size()
+        assert tyL.size() == tyR.size()
 
         self._asm.push(node.right)
         self._asm.load(node.left)
@@ -991,13 +1002,13 @@ class Codegen(NodeVisitor):
 
         match node.op:
             case "+":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     self._asm.emit(
                         [
-                            "add     a0, a0, a2",
-                            "sltu    a2, a0, a2",
-                            "add     a1, a1, a3",
-                            "add     a1, a1, a2",
+                            "add a0, a0, a2",
+                            "sltu a2, a0, a2",
+                            "add a1, a1, a3",
+                            "add a1, a1, a2",
                         ]
                     )
                 else:
@@ -1012,13 +1023,13 @@ class Codegen(NodeVisitor):
                     self._asm.emit("add a0, a0, a2")
 
             case "-":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     self._asm.emit(
                         [
-                            "sub     a1, a1, a3",
-                            "sltu    a3, a0, a2",
-                            "sub     a1, a1, a3",
-                            "sub     a0, a0, a2",
+                            "sub a1, a1, a3",
+                            "sltu a3, a0, a2",
+                            "sub a1, a1, a3",
+                            "sub a0, a0, a2",
                         ]
                     )
                 else:
@@ -1029,22 +1040,22 @@ class Codegen(NodeVisitor):
                     self._asm.emit("sub a0, a0, a2")
 
             case "*":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     self._asm.emit(
                         [
-                            "mul     a1, a2, a1",
-                            "mul     a3, a3, a0",
-                            "add     a1, a1, a3",
-                            "mulhu   a3, a2, a0",
-                            "add     a1, a1, a3",
-                            "mul     a0, a2, a0",
+                            "mul a1, a2, a1",
+                            "mul a3, a3, a0",
+                            "add a1, a1, a3",
+                            "mulhu a3, a2, a0",
+                            "add a1, a1, a3",
+                            "mul a0, a2, a0",
                         ]
                     )
                 else:
                     self._asm.emit("mul a0, a0, a2")
 
             case "/":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     raise CCNotImplemented("64-bit /")
                 else:
                     assert isinstance(tyL, IntType)
@@ -1052,7 +1063,7 @@ class Codegen(NodeVisitor):
                     self._asm.emit(f"{mnemonic} a0, a0, a2")
 
             case "%":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     raise CCNotImplemented("64-bit %")
                 else:
                     assert isinstance(tyL, IntType)
@@ -1061,17 +1072,17 @@ class Codegen(NodeVisitor):
 
             case "&" | "|" | "^":
                 mnemonic = {"&": "and", "|": "or", "^": "xor"}[node.op]
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     self._asm.emit(f"{mnemonic} a1, a1, a3")
                 self._asm.emit(f"{mnemonic} a0, a0, a2")
 
             case "<<":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     raise CCNotImplemented(f"64-bit <<")
                 else:
                     self._asm.emit(f"sll a0, a0, a2")
             case ">>":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     raise CCNotImplemented(f"64-bit >>")
                 else:
                     assert isinstance(tyL, IntType)
@@ -1079,29 +1090,21 @@ class Codegen(NodeVisitor):
                     self._asm.emit(f"{mnemonic} a0, a0, a2")
 
             case "&&":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     self._asm.emit(
                         [
-                            "or      a0, a0, a1",
-                            "snez    a0, a0",
-                            "or      a2, a2, a3",
-                            "snez    a1, a2",
-                            "and     a0, a0, a1",
-                            "li      a1, 0",
+                            "or a0, a0, a1",
+                            "or a2, a2, a3",
                         ]
                     )
-                else:
-                    self._asm.emit(["snez a0, a0", "snez a2, a2", "and a0, a0, a2"])
+                self._asm.emit(["snez a0, a0", "snez a2, a2", "and a0, a0, a2"])
 
             case "||":
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     self._asm.emit(
                         [
-                            "or      a1, a1, a3",
-                            "or      a0, a0, a2",
-                            "or      a0, a0, a1",
-                            "snez    a0, a0",
-                            "li      a1, 0",
+                            "or a0, a0, a1",
+                            "or a2, a2, a3",
                         ]
                     )
                 else:
@@ -1109,14 +1112,13 @@ class Codegen(NodeVisitor):
 
             case "==" | "!=":
                 mnemonic = "seqz" if node.op == "==" else "snez"
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     self._asm.emit(
                         [
-                            "xor     a1, a1, a3",
-                            "xor     a0, a0, a2",
-                            "or      a0, a0, a1",
-                            f"{mnemonic}    a0, a0",
-                            "li      a1, 0",
+                            "xor a1, a1, a3",
+                            "xor a0, a0, a2",
+                            "or a0, a0, a1",
+                            f"{mnemonic} a0, a0",
                         ]
                     )
                 else:
@@ -1124,10 +1126,10 @@ class Codegen(NodeVisitor):
 
             case "<" | ">=":
                 mnemonic = "sltu"
-                if isinstance(ty, IntType) and not ty._unsigned:
+                if isinstance(tyL, IntType) and not tyL._unsigned:
                     mnemonic = "slt"
 
-                if ty.size() == 8:
+                if tyL.size() == 8:
                     self._asm._secText.addRaw(
                         f"""
                         beq     a1, a3, $1f
@@ -1151,7 +1153,7 @@ class Codegen(NodeVisitor):
             case _:
                 unreachable()
 
-        self.setNodeValue(node, TemporaryValue(ty))
+        self.setNodeValue(node, TemporaryValue(self.getNodeType(node)))
 
     # Assignment also returns the same value as what was stored in lhs
     # (so that expressions such as a = b = c are possible). The value
@@ -1200,12 +1202,14 @@ class Codegen(NodeVisitor):
         self.setNodeValue(node, v)
 
     def visit_FuncCall(self, node: c_ast.FuncCall):
-        args: list[c_ast.Node] = node.args.exprs
+        args: list[c_ast.Node] = node.args.exprs if node.args else []
         r = self.getNodeRecord(node.name)
+        v = r._value
         if isinstance(r._value, SymConstant):
-            self._asm.emitCall(r._value, args)
+            self._asm.emitCall(r._value, *args)
         else:
-            self._asm.emitCall(node.name, args)
+            self._asm.emitCall(node.name, *args)
+        self.setNodeValue(node, TemporaryValue(v.getType()))
 
     def visit_TernaryOp(self, node: c_ast.TernaryOp):
         labelFalse, labelEnd = self.getNodeLabels(node)
@@ -1278,6 +1282,7 @@ class Codegen(NodeVisitor):
         self.visit(node.stmt)
 
         self._asm.emitLabel(labelNext)
+        self.visit(node.next)
         self._asm.emit(f"j ${labelStart}")
 
         self._asm.emitLabel(labelEnd)
@@ -1296,6 +1301,9 @@ class Codegen(NodeVisitor):
             self._asm.emit(f"j ${labelDefault}")
 
         self.visit(node.stmt)
+
+        labelEnd = self.getNodeLabels(node)[0]
+        self._asm.emitLabel(labelEnd)
 
     def visit_Case(self, node: c_ast.Case):
         label = self.getNodeLabels(node)[0]
