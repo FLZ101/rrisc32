@@ -305,6 +305,38 @@ void Emulator::load() {
                       << elf::RRISC32_PAGE_ALIGN;
   stackBot = (o.nPages - 1) << elf::RRISC32_PAGE_ALIGN;
 
+  // pass arguments
+  if (o.args.empty()) {
+    wr(Reg::a0, 0);
+    wr(Reg::a1, 0);
+  } else {
+    unsigned n = o.args.size();
+
+    u32 sz = 0;
+    for (auto &arg : o.args)
+      sz += arg.size() + 1;
+    sz += 4 * (n + 1);
+    sz = P2ALIGN(sz, elf::RRISC32_PAGE_ALIGN);
+    stackBot -= sz;
+
+    std::vector<u32> addrs;
+    u32 p = stackBot;
+    for (auto &arg : o.args) {
+      addrs.push_back(p);
+      std::memcpy(mem + p, arg.c_str(), arg.size() + 1);
+      p += arg.size() + 1;
+    }
+    addrs.push_back(0);
+
+    wr(Reg::a0, n); // argc
+    wr(Reg::a1, p); // argv
+
+    for (u32 addr : addrs) {
+      writeLE(mem + p, addr);
+      p += 4;
+    }
+  }
+
   wi(elf::RRISC32_ENTRY);
   wr(Reg::sp, stackBot);
 

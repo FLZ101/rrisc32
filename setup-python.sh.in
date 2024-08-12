@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -e
+
+cmake_binary_dir=@CMAKE_BINARY_DIR@
+cmake_source_dir=@CMAKE_SOURCE_DIR@
+
+cd $cmake_binary_dir
+
+export PATH=$cmake_binary_dir/python/bin:$PATH
+
+if [[ ! -e python ]] ; then
+  python3 -m venv python
+  pip install -U pip
+fi
+
+pip install -r $cmake_source_dir/requirements.txt

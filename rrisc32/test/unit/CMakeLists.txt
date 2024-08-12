@@ -16,5 +16,5 @@ add_executable(rrisc32-gtest
 
 target_link_libraries(rrisc32-gtest GTest::gtest_main)
 
-add_custom_target(check-unit
+add_custom_target(rrisc32-check-unit
     COMMAND rrisc32-gtest)

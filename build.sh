@@ -9,4 +9,5 @@ cmake -Wno-dev \
     -G"$G" \
     -B build -S .
 cmake --build build
-cmake --build build --target check-all
+cmake --build build --target rrisc32-check-all
+cmake --build build --target libc-check

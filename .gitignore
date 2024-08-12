@@ -1,5 +1,6 @@
 /build/
 /.vscode/
 *.o
+*.a
 __pycache__/
 /.cache/

@@ -5,24 +5,17 @@ import subprocess
 import tarfile
 import glob
 import tempfile
+import shutil
 
 from pycparser import parse_file
 
 from sema import Sema, NodeVisitorCtx
 from codegen import Codegen
 
-
-def get_sysroot():
-    sr = os.path.abspath(sys.argv[0])
-    sr = os.path.dirname(sr)
-    return os.path.dirname(sr)
-
-
-sysroot = get_sysroot()
-binDir = os.path.join(sysroot, "bin")
-incDir = os.path.join(sysroot, "include")
-libDir = os.path.join(sysroot, "lib")
-tmpDir = os.path.join(sysroot, "tmp")
+tmpDir: str = None
+binDir: str = None
+incDir: str = None
+libDir: str = None
 
 
 def mktemp(suffix: str, prefix: str):
@@ -78,7 +71,7 @@ class CompileAction(Action):
             assert infile.endswith(".c")
             self._outfile = infile[:-2] + ".s"
 
-        cpp_args = ["-nostdinc", f"-I{incDir}"] + self._cpp_args
+        cpp_args = ["-nostdinc"] + self._cpp_args
         ast = parse_file(infile, use_cpp=True, cpp_args=cpp_args)
 
         ctx = NodeVisitorCtx()
@@ -109,7 +102,7 @@ class AssembleAction(Action):
             self._outfile = infile[:-2] + ".o"
 
         exe = os.path.join(binDir, "rrisc32-as")
-        subprocess.run([exe, "-o", self._outfile, infile])
+        subprocess.run([exe, "-o", self._outfile, infile], check=True)
 
     def getOutfile(self):
         self.run()
@@ -120,14 +113,13 @@ def archive(infiles: list[str], outfile: str):
     with tarfile.open(outfile, "w|") as tf:
         for infile in infiles:
             name = os.path.basename(infile)
-            with open(infile) as ifs:
-                tf.addfile(tarfile.TarInfo(name), ifs)
+            tf.add(infile, name)
 
 
 def extract(infile: str) -> list[str]:
     with tarfile.open(infile, "r|") as tf:
         outdir = mkdtemp(".extracted", infile)
-        tf.extractall(outdir)
+        tf.extractall(outdir, filter="data")
         outfiles = glob.glob(os.path.join(outdir, "*.o"))
         return outfiles
 
@@ -166,7 +158,7 @@ class LinkAction(MIAction):
     def run(self):
         infiles = self.getInfiles()
         exe = os.path.join(binDir, "rrisc32-link")
-        subprocess.run([exe, "-o", self._outfile, " ".join(infiles)])
+        subprocess.run([exe, "-o", self._outfile] + infiles, check=True)
 
     def getOutfile(self):
         self.run()
@@ -189,6 +181,8 @@ class ArchiveAction(MIAction):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--sysroot")
+    parser.add_argument("--nostdinc", action="store_true")
     parser.add_argument("--include", metavar="<incdir>", action="append")
     parser.add_argument(
         "--compile", action="store_true", help="Compile only; do not assemble or link."
@@ -204,11 +198,30 @@ def main():
     parser.add_argument("infiles", metavar="<infile>", nargs="+")
 
     args = parser.parse_args()
+
+    sysroot = args.sysroot
+    if not sysroot:
+        _ = sys.argv[0]
+        if "/" not in _:
+            _ = shutil.which(_)
+
+        _ = os.path.abspath(_)
+        _ = os.path.dirname(_)
+        sysroot = os.path.dirname(_)
+
+    global tmpDir, binDir, incDir, libDir
+    tmpDir = os.path.join(sysroot, "tmp")
+    binDir = os.path.join(sysroot, "bin")
+    incDir = os.path.join(sysroot, "include")
+    libDir = os.path.join(sysroot, "lib")
+
     infiles: list[str] = args.infiles
 
     cpp_args = []
-    for incdir in args.include or []:
-        cpp_args.append(f"-I{incdir}")
+    for x in args.include or []:
+        cpp_args.append(f"-I{x}")
+    if not args.nostdinc:
+        cpp_args.append(f"-I{incDir}")
 
     for infile in infiles:
         if infile[-2:] in [".c", ".s", ".o", ".a"]:
@@ -281,6 +294,8 @@ def main():
         if args.archive:
             actions.append(ArchiveAction(inacts, args.o))
         else:
+            inacts.insert(0, ExtractAction(InputAction(os.path.join(libDir, "libc.a"))))
+            inacts.insert(0, InputAction(os.path.join(libDir, "crt.o")))
             actions.append(LinkAction(inacts, args.o))
 
     for act in actions:
