@@ -57,7 +57,6 @@ void f() {
 // CC-NEXT:     lw a1, fp, -8
 // CC-NEXT:     or a0, a0, a1
 // CC-NEXT:     seqz a0, a0
-// CC-NEXT:     li a1, 0
 // CC-NEXT:     mv sp, fp
 // CC-NEXT:     pop fp
 // CC-NEXT:     pop ra

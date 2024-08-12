@@ -990,11 +990,31 @@ class Codegen(NodeVisitor):
         self.setNodeValue(node, TemporaryValue(self.getNodeType(node)))
 
     def visit_BinaryOp(self, node: c_ast.BinaryOp):
-        # ty = self.getNodeType(node)
+        ty = self.getNodeType(node)
         tyL = self.getNodeType(node.left)
         tyR = self.getNodeType(node.right)
 
         assert tyL.size() == tyR.size()
+
+        if self.getNodeTranslated(node):
+            self.translate(node)
+            self.setNodeValue(node, TemporaryValue(ty))
+            return
+
+        match node.op:
+            case "&&" | "||":
+                mnemonic = "beqz" if node.op == "&&" else "bnez"
+                labelEnd = self.getNodeLabels(node)[0]
+                self._asm.load(node.left)
+                if tyL.size() == 8:
+                    self._asm.emit("or a0, a0, a1")
+                self._asm.emit(f"{mnemonic} a0, ${labelEnd}")
+                self._asm.load(node.right)
+                if tyL.size() == 8:
+                    self._asm.emit("or a0, a0, a1")
+                self._asm.emitLabel(labelEnd)
+                self._asm.emit("snez a0, a0")
+                return
 
         self._asm.push(node.right)
         self._asm.load(node.left)
@@ -1089,27 +1109,6 @@ class Codegen(NodeVisitor):
                     mnemonic = "srl" if tyL._unsigned else "sra"
                     self._asm.emit(f"{mnemonic} a0, a0, a2")
 
-            case "&&":
-                if tyL.size() == 8:
-                    self._asm.emit(
-                        [
-                            "or a0, a0, a1",
-                            "or a2, a2, a3",
-                        ]
-                    )
-                self._asm.emit(["snez a0, a0", "snez a2, a2", "and a0, a0, a2"])
-
-            case "||":
-                if tyL.size() == 8:
-                    self._asm.emit(
-                        [
-                            "or a0, a0, a1",
-                            "or a2, a2, a3",
-                        ]
-                    )
-                else:
-                    self._asm.emit(["or a0, a0, a2", "snez a0, a0"])
-
             case "==" | "!=":
                 mnemonic = "seqz" if node.op == "==" else "snez"
                 if tyL.size() == 8:
@@ -1132,13 +1131,12 @@ class Codegen(NodeVisitor):
                 if tyL.size() == 8:
                     self._asm._secText.addRaw(
                         f"""
-                        beq     a1, a3, $1f
-                        {mnemonic}     a0, a1, a3
-                        j       $2f
+                        beq a1, a3, $1f
+                        {mnemonic} a0, a1, a3
+                        j $2f
                     1:
-                        sltu    a0, a0, a2
+                        sltu a0, a0, a2
                     2:
-                        li      a1, 0
                         """
                     )
                 else:
@@ -1148,7 +1146,7 @@ class Codegen(NodeVisitor):
                     self._asm.emit("xori a0, a0, 1")
 
             case ">" | "<=":
-                self.translate(node)
+                unreachable()
 
             case _:
                 unreachable()

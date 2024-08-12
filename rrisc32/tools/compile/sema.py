@@ -1711,21 +1711,9 @@ class Sema(NodeVisitor):
                                         unreachable()
                                 self.setNodeValue(node, getIntConstant(i, "int"))
                             case _:
-                                match node.op:
-                                    case '&&':
-                                        # translate expr1 && expr2 into
-                                        # if (expr1) goto end;
-                                        # expr2
-                                        # end;
-                                        pass
-                                    case '||':
-                                        pass
-                                    case _:
-                                        unreachable()
-                                # expr1 && expr2
-                                # if (expr1)
-                                # goto end
-                                # expr2
+                                label = "and.end" if node.op == "&&" else "or.end"
+                                self.setNodeLabels(node, [label])
+
                                 self.setNodeTypeR(node, getBuiltinType("int"))
                     case _:
                         raise CCError(f"can not {node.op} {tyL} and {tyR}")

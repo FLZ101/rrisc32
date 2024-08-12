@@ -38,6 +38,7 @@ void h(int i) {
 // CC-NEXT:     mv fp, sp
 // CC-NEXT:     call $f
 // CC-NEXT:     j $.LL_2.if.end
+// CC-NEXT: .LL_1.if.false:
 // CC-NEXT: .LL_2.if.end:
 // CC-NEXT:     j $.LL_4.if.end
 // CC-NEXT: .LL_3.if.false:
