@@ -299,6 +299,10 @@ template <unsigned N> bool checkImmRange(s64 imm) {
   return minImm<N>() <= imm && imm <= maxImm<N>();
 }
 
+bool checkImmRangeIS(s64 imm);
+bool checkImmRangeB(s64 imm);
+bool checkImmRangeJ(s64 imm);
+
 template <typename Key, typename T> class CacheMap {
 public:
   CacheMap() {}

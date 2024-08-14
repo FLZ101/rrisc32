@@ -218,3 +218,5 @@
 
   mv ax, ax =>
   ```
+
+* t6 is reserved for assembler

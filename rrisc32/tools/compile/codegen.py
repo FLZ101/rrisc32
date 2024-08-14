@@ -152,76 +152,6 @@ class Asm:
     def checkImmS(self, i: int):
         return self.checkImm(i, 12)
 
-    def emitFormatI(self, mnemonic: str, rd: str, rs1: str, i: int = 0, rt: str = "t0"):
-        assert mnemonic in [
-            "addi",
-            "xori",
-            "ori",
-            "andi",
-            "slli",
-            "srli",
-            "srai",
-            "slti",
-            "sltiu",
-            "lb",
-            "lh",
-            "lw",
-            "lbu",
-            "lhu",
-        ]
-
-        if i == 0 and rd == rs1 and mnemonic in ["addi", "xori", "ori"]:
-            return
-
-        if self.checkImmI(i):
-            self.emit(f"{mnemonic} {rd}, {rs1}, {i}")
-        else:
-            assert rs1 != rt
-
-            if mnemonic not in [
-                "lb",
-                "lh",
-                "lw",
-                "lbu",
-                "lhu",
-            ]:
-
-                def _getRMnemonic():
-                    _ = str(reversed(mnemonic))
-                    _ = _.replace("i", "", 1)
-                    _ = str(reversed(_))
-                    return _
-
-                self.emit(
-                    [
-                        f"li {rt}, {i}",
-                        f"{_getRMnemonic()} {rd}, {rs1}, {rt}",
-                    ]
-                )
-            else:
-                self.emit(
-                    [
-                        f"lui {rt}, %hi({i})",
-                        f"add {rt}, {rt}, {rs1}",
-                        f"{mnemonic} {rd}, {rt}, %lo({i})",
-                    ]
-                )
-
-    # sb/h/w rs2, i(rs1)
-    def emitFormatS(self, mnemonic: str, rs2: str, rs1: str, i: int = 0, rt: str = "t0"):
-        assert mnemonic in ["sb", "sh", "sw"]
-
-        if self.checkImmS(i):
-            self.emit(f"{mnemonic} {rs1}, {rs2}, {i}")
-        else:
-            self.emit(
-                [
-                    f"lui {rt}, %hi({i})",
-                    f"add {rt}, {rt}, {rs1}",
-                    f"{mnemonic} {rt}, {rs2}, %lo({i})",
-                ]
-            )
-
     def addressOf(self, v: LValue):
         match v:
             case GlobalVariable() | StaticVariable() | ExternVariable():
@@ -272,7 +202,7 @@ class Asm:
                     self.emit(f"li {r1}, ${v._name}")
 
             case StackFrameOffset():
-                self.emitFormatI("addi", "a0", "fp", v._i)
+                self.emit(f"addi a0, fp, {v._i}")
 
             case TemporaryValue():
                 sz = v._type.size()
@@ -333,16 +263,15 @@ class Asm:
                         _offset = addr._i
                         match sz:
                             case 8:
-                                self.emitFormatI("lw", r1, "fp", _offset)
-                                self.emitFormatI("lw", r2, "fp", _offset + 4)
+                                self.emit([f"lw {r1}, fp, {_offset}", f"lw {r2}, fp, {_offset+4}"])
                             case 4:
-                                self.emitFormatI("lw", r1, "fp", _offset)
+                                self.emit(f"lw {r1}, fp, {_offset}")
                             case 2:
                                 assert isinstance(ty, IntType)
-                                self.emitFormatI("lhu" if ty._unsigned else "lh", r1, "fp", _offset)
+                                self.emit(f'{"lhu" if ty._unsigned else "lh"} {r1}, fp, {_offset}')
                             case 1:
                                 assert isinstance(ty, IntType)
-                                self.emitFormatI("lbu" if ty._unsigned else "lb", r1, "fp", _offset)
+                                self.emit(f'{"lbu" if ty._unsigned else "lb"} {r1}, fp, {_offset}')
                             case _:
                                 unreachable()
 
@@ -350,18 +279,15 @@ class Asm:
                         _offset = addr._i
                         match sz:
                             case 8:
-                                self.emit(f"lw {r1}, {_offset}")
-                                self.emit(f"lw {r2}, {_offset + 4}")
+                                self.emit([f"lw {r1}, {_offset}", f"lw {r2}, {_offset + 4}"])
                             case 4:
                                 self.emit(f"lw {r1}, {_offset}")
                             case 2:
                                 assert isinstance(ty, IntType)
-                                instr = "lhu" if ty._unsigned else "lh"
-                                self.emit(f"{instr} {r1}, {_offset}")
+                                self.emit(f'{"lhu" if ty._unsigned else "lh"} {r1}, {_offset}')
                             case 1:
                                 assert isinstance(ty, IntType)
-                                instr = "lbu" if ty._unsigned else "lb"
-                                self.emit(f"{instr} {r1}, {_offset}")
+                                self.emit(f'{"lbu" if ty._unsigned else "lb"} {r1}, {_offset}')
                             case _:
                                 unreachable()
 
@@ -369,16 +295,15 @@ class Asm:
                         match sz:
                             case 8:
                                 assert r2 != "a0"
-                                self.emitFormatI("lw", r2, "a0", 4)
-                                self.emitFormatI("lw", r1, "a0")
+                                self.emit([f"lw {r2}, a0, 4", f"lw {r1}, a0, 0"])
                             case 4:
-                                self.emitFormatI("lw", r1, "a0")
+                                self.emit(f"lw {r1}, a0, 0")
                             case 2:
                                 assert isinstance(ty, IntType)
-                                self.emitFormatI("lhu" if ty._unsigned else "lh", r1, "a0")
+                                self.emit(f'{"lhu" if ty._unsigned else "lh"}, {r1}, a0, 0')
                             case 1:
                                 assert isinstance(ty, IntType)
-                                self.emitFormatI("lbu" if ty._unsigned else "lb", r1, "a0")
+                                self.emit(f'{"lbu" if ty._unsigned else "lb"}, {r1}, a0, 0')
                             case _:
                                 unreachable()
 
@@ -439,16 +364,15 @@ class Asm:
                         _offset = addr._i
                         match sz:
                             case 8:
-                                self.emitFormatS("sw", r1, "fp", _offset)
-                                self.emitFormatS("sw", r2, "fp", _offset + 4)
+                                self.emit([f"sw fp, {r1}, {_offset}", f"sw fp, {r2}, {_offset+4}"])
                             case 4:
-                                self.emitFormatS("sw", r1, "fp", _offset)
+                                self.emit(f"sw fp, {r1}, {_offset}")
                             case 2:
                                 assert isinstance(ty, IntType)
-                                self.emitFormatS("sh", r1, "fp", _offset)
+                                self.emit(f"sh fp, {r1}, {_offset}")
                             case 1:
                                 assert isinstance(ty, IntType)
-                                self.emitFormatS("sb", r1, "fp", _offset)
+                                self.emit(f"sb fp, {r1}, {_offset}")
                             case _:
                                 unreachable()
 
@@ -472,16 +396,15 @@ class Asm:
                     case TemporaryValue():
                         match sz:
                             case 8:
-                                self.emitFormatS("sw", r1, "a0")
-                                self.emitFormatS("sw", r2, "a0", 4)
+                                self.emit([f"sw a0, {r1}, 0", f"sw a0, {r2}, 4"])
                             case 4:
-                                self.emitFormatS("sw", r1, "a0")
+                                self.emit(f"sw a0, {r1}, 0")
                             case 2:
                                 assert isinstance(ty, IntType)
-                                self.emitFormatS("sh", r1, "a0")
+                                self.emit(f"sh a0, {r1}, 0")
                             case 1:
                                 assert isinstance(ty, IntType)
-                                self.emitFormatS("sb", r1, "a0")
+                                self.emit(f"sb a0, {r1}, 0")
                             case _:
                                 unreachable()
 
@@ -522,7 +445,8 @@ class Asm:
 
     def emitPrelogue(self):
         self.emit(["push ra", "push fp", "mv fp, sp"])
-        self.emitFormatI("addi", "sp", "sp", -self._cg._func._maxOffset)
+        if self._cg._func._maxOffset > 0:
+            self.emit(f"addi sp, sp, {-self._cg._func._maxOffset}")
 
     def emitEpilogue(self):
         self.emit(["mv sp, fp", "pop fp", "pop ra"])
@@ -585,14 +509,14 @@ class Asm:
 
         sec.addRaw(
             """
-            blez    a2, $2f
-            add     a2, a2, a0
-            mv      a3, a0
+            blez a2, $2f
+            add a2, a2, a0
+            mv a3, a0
         1:
-            addi    a4, a3, 1
-            sb      a3, a1, 0
-            mv      a3, a4
-            bltu    a4, a2, $1b
+            addi a4, a3, 1
+            sb a3, a1, 0
+            mv a3, a4
+            bltu a4, a2, $1b
         2:
             ret
             """
@@ -626,17 +550,17 @@ class Asm:
 
         sec.addRaw(
             """
-            blez    a2, $2f
-            add     a3, a1, a2
+            blez a2, $2f
+            add a3, a1, a2
         1:
-            lbu     a4, a1, 0
-            addi    a5, a1, 1
-            addi    a2, a0, 1
-            sb      a0, a4, 0
-            mv      a0, a2
-            mv      a1, a5
-            bltu    a5, a3, $1b
-            mv      a0, a2
+            lbu a4, a1, 0
+            addi a5, a1, 1
+            addi a2, a0, 1
+            sb a0, a4, 0
+            mv a0, a2
+            mv a1, a5
+            bltu a5, a3, $1b
+            mv a0, a2
             ret
         2:
             ret
@@ -1035,11 +959,11 @@ class Codegen(NodeVisitor):
                     if isinstance(tyL, PointerType):  # p + i
                         sz = 0 if tyL._base.isVoid() else tyL._base.size()
                         if sz > 1:
-                            self._asm.emitFormatI("slli", "a2", "a2", log2(sz))
+                            self._asm.emit(f"slli a2, a2, {log2(sz)}")
                     elif isinstance(tyR, PointerType):  # i + p
                         sz = tyR._base.size()
                         if sz > 1:
-                            self._asm.emitFormatI("slli", "a0", "a0", log2(sz))
+                            self._asm.emit(f"slli a0, a0, {log2(sz)}")
                     self._asm.emit("add a0, a0, a2")
 
             case "-":
@@ -1056,7 +980,7 @@ class Codegen(NodeVisitor):
                     if isinstance(tyL, PointerType):
                         sz = 0 if tyL._base.isVoid() else tyL._base.size()
                         if sz > 1:
-                            self._asm.emitFormatI("slli", "a2", "a2", log2(sz))
+                            self._asm.emit(f"slli a2, a2, {log2(sz)}")
                     self._asm.emit("sub a0, a0, a2")
 
             case "*":

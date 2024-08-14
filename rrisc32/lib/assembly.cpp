@@ -1052,7 +1052,7 @@ void Assembler::expandInstr(const std::string &s,
 }
 
 void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
-  const std::string &name = stmt->s;
+  std::string &name = stmt->s;
 
   std::string format;
   for (const auto &expr : stmt->arguments)
@@ -1064,29 +1064,80 @@ void Assembler::expandInstr(std::unique_ptr<Statement> stmt) {
 
   Expr x0 = Expr("x0", Expr::Reg);
   Expr sp = Expr("sp", Expr::Reg);
+  Expr t6 = Expr("t6", Expr::Reg);
+
+  s64 imm = 0;
+
+  auto getImm = [this, &imm](const Expr &e) {
+    ExprVal v = evalExpr(e);
+    if (v.isInt()) {
+      imm = v.getI();
+      return true;
+    }
+    return false;
+  };
+
   if (name == "li" && format == "ri") {
-    ExprVal v1 = evalExpr(e1);
-    if (v1.isInt()) {
-      s64 imm = v1.getI();
-      if (checkImmRange<12>(imm)) {
-        addInstr("addi", {e0, x0, e1});
-        return;
-      }
+    if (getImm(e1) && checkImmRangeIS(imm)) {
+      addInstr("addi", {e0, x0, e1});
+      return;
     }
     addInstr("lui", {e0, Expr("hi", {e1})});
     addInstr("addi", {e0, e0, Expr("lo", {e1})});
 
+  } else if (isOneOf(name, {"addi", "xori", "ori", "andi", "slli", "srli",
+                            "srai", "slti", "sltiu"}) &&
+             format == "rri" && getImm(e2)) {
+    if (rrisc32::isSameReg(e0.s, e1.s) && imm == 0 &&
+        isOneOf(name, {"addi", "xori", "ori"}))
+      return;
+
+    if (checkImmRangeIS(imm)) {
+      addInstr(std::move(stmt));
+      return;
+    }
+
+    std::erase(name, 'i');
+    expandInstr("li", {t6, e2});
+    addInstr(name, {e0, e1, t6});
+
+  } else if (isOneOf(name, {"lb", "lh", "lw", "lbu", "lhu"}) &&
+             format == "rri") {
+    if (checkImmRangeIS(imm)) {
+      addInstr(std::move(stmt));
+      return;
+    }
+    addInstr("lui", {t6, Expr("hi", {e2})});
+    addInstr("add", {t6, t6, e1});
+    addInstr(name, {e0, t6, Expr("lo", {e2})});
+
   } else if (isOneOf(name, {"lb", "lh", "lw", "lbu", "lhu"}) &&
              format == "ri") {
-    // load global
+    if (getImm(e1) && checkImmRangeIS(imm)) {
+      addInstr(name, {e0, x0, e1});
+      return;
+    }
     addInstr("lui", {e0, Expr("hi", {e1})});
     addInstr(name, {e0, e0, Expr("lo", {e1})});
 
   } else if (isOneOf(name, {"sb", "sh", "sw", "sbu", "shu"}) &&
              format == "rri") {
-    // store global
-    addInstr("lui", {e0, Expr("hi", {e2})});
-    addInstr(name, {e0, e1, Expr("lo", {e2})});
+    if (getImm(e2) && checkImmRangeIS(imm)) {
+      addInstr(std::move(stmt));
+      return;
+    }
+    addInstr("lui", {t6, Expr("hi", {e2})});
+    addInstr("add", {t6, t6, e0});
+    addInstr(name, {t6, e1, Expr("lo", {e2})});
+
+  } else if (isOneOf(name, {"sb", "sh", "sw", "sbu", "shu"}) &&
+             format == "ri") {
+    if (getImm(e1) && checkImmRangeIS(imm)) {
+      addInstr(name, {x0, e0, e1});
+      return;
+    }
+    addInstr("lui", {t6, Expr("hi", {e1})});
+    addInstr(name, {t6, e0, Expr("lo", {e1})});
 
   } else if (name == "nop" && format == "") {
     addInstr("addi", {x0, x0, Expr(0)});
@@ -1268,7 +1319,7 @@ void Assembler::handleInstr(Statement *stmt) {
       s64 imm = v.getOffset() - stmt->offset;
       if (imm & 1)
         INVALID_STATEMENT("not even", imm);
-      if (name == "jal" ? !checkImmRange<21>(imm) : !checkImmRange<13>(imm))
+      if (name == "jal" ? !checkImmRangeJ(imm) : !checkImmRangeB(imm))
         INVALID_STATEMENT("out of range", imm);
       instr.addOperand(imm);
     } else if (v.isRel()) {

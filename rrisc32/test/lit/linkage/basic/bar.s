@@ -41,7 +41,7 @@ bar_x:
 
 # SYM-O:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
 # SYM-O-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
-# SYM-O-NEXT: 06      01      00      2038    LOCAL   SECTION DEF     02      .text
+# SYM-O-NEXT: 06      01      00      203c    LOCAL   SECTION DEF     02      .text
 # SYM-O-NEXT: 06      02      00      00      LOCAL   SECTION DEF     03      .rodata
 # SYM-O-NEXT: 06      03      00      2018    LOCAL   SECTION DEF     04      .data
 # SYM-O-NEXT: 06      04      00      0400    LOCAL   SECTION DEF     05      .bss
@@ -61,7 +61,7 @@ bar_x:
 # REL-O-NEXT: 08      08      2024    HI20    0       07      06      02
 # REL-O-NEXT: 08      09      2028    LO12_I  0       07      06      02
 # REL-O-NEXT: 08      0a      202c    HI20    4       07      06      02
-# REL-O-NEXT: 08      0b      2030    LO12_S  4       07      06      02
+# REL-O-NEXT: 08      0b      2034    LO12_S  4       07      06      02
 # REL-O-NEXT: 09      00      2004    32      0       06      06      04
 # REL-O-NEXT: 09      01      2008    32      4       06      06      04
 # REL-O-NEXT: 09      02      2010    32      0       07      06      04
@@ -82,9 +82,10 @@ bar_x:
 # TEXT-O:      00002020  addi x0, x0, 0
 # TEXT-O-NEXT: 00002024  lui x1, 0
 # TEXT-O-NEXT: 00002028  lw x1, x1, 0
-# TEXT-O-NEXT: 0000202c  lui x1, 0
-# TEXT-O-NEXT: 00002030  sw x1, x2, 0
-# TEXT-O-NEXT: 00002034  jalr x0, x1, 0
+# TEXT-O-NEXT: 0000202c  lui x31, 0
+# TEXT-O-NEXT: 00002030  add x31, x31, x1
+# TEXT-O-NEXT: 00002034  sw x31, x2, 0
+# TEXT-O-NEXT: 00002038  jalr x0, x1, 0
 
 # DATA-O:      [ Hex/.data ]
 # DATA-O-NEXT: 0000000000000000  ffffffff ffffffff ffffffff ffffffff
@@ -93,13 +94,13 @@ bar_x:
 # DATA-O-NEXT: 0000000000002010  00000000 00000000
 
 # SEC-E:      Idx     Addr    Off     Size    Link    Info    AddrAli EntSize Flags   Type    Name
-# SEC-E:      02      1000    1000    2038    00      00      1000    00      AE      PROGBIT .text
+# SEC-E:      02      1000    1000    203c    00      00      1000    00      AE      PROGBIT .text
 # SEC-E-NEXT: 03      4000    4000    00      00      00      1000    00      A       PROGBIT .rodata
 # SEC-E-NEXT: 04      4000    4000    2018    00      00      1000    00      AW      PROGBIT .data
 # SEC-E-NEXT: 05      7000    7000    0400    00      00      1000    00      AW      NOBITS  .bss
 
 # SEG-E:      Type    Offset  Vaddr   Paddr   Filesz  Memsz   Flags   Align
-# SEG-E-NEXT: LOAD    1000    1000    1000    2038    2038    R E     1000
+# SEG-E-NEXT: LOAD    1000    1000    1000    203c    203c    R E     1000
 # SEG-E-NEXT: LOAD    4000    4000    4000    00      00      R       1000
 # SEG-E-NEXT: LOAD    4000    4000    4000    2018    2018    RW      1000
 # SEG-E-NEXT: LOAD    7000    7000    7000    00      0400    RW      1000
@@ -118,9 +119,10 @@ bar_x:
 # TEXT-E:      00003020  addi x0, x0, 0
 # TEXT-E-NEXT: 00003024  lui x1, 6
 # TEXT-E-NEXT: 00003028  lw x1, x1, 0
-# TEXT-E-NEXT: 0000302c  lui x1, 6
-# TEXT-E-NEXT: 00003030  sw x1, x2, 4
-# TEXT-E-NEXT: 00003034  jalr x0, x1, 0
+# TEXT-E-NEXT: 0000302c  lui x31, 6
+# TEXT-E-NEXT: 00003030  add x31, x31, x1
+# TEXT-E-NEXT: 00003034  sw x31, x2, 4
+# TEXT-E-NEXT: 00003038  jalr x0, x1, 0
 
 # DATA-E:      [ Hex/.data ]
 # DATA-E-NEXT: 0000000000004000  ffffffff ffffffff ffffffff ffffffff

@@ -182,6 +182,12 @@ s32 hi20(s32 x) { return x >> 12 & 0xfffff; }
 
 s32 lo12(s32 x) { return x & 0xfff; }
 
+bool checkImmRangeIS(s64 imm) { return checkImmRange<12>(imm); }
+
+bool checkImmRangeB(s64 imm) { return checkImmRange<13>(imm); }
+
+bool checkImmRangeJ(s64 imm) { return checkImmRange<21>(imm); }
+
 #ifndef NDEBUG
 std::string debugType;
 

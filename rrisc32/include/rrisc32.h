@@ -160,6 +160,8 @@ const u32 fp = s0;
 
 bool isSameReg(const std::string &s1, const std::string &s2);
 
+void setRegNameX(bool x);
+
 enum class InstrType { Invalid, R, I, S, B, U, J };
 
 struct InstrDesc {

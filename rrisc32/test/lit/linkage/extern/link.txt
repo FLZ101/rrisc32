@@ -1,49 +1,52 @@
-RUN: rrisc32-as -o %t.bar.o %S/bar.s
-RUN: rrisc32-as -o %t.foo.o %S/foo.s
-RUN: rrisc32-link -o %t.exe %t.bar.o %t.foo.o
+; RUN: rrisc32-as -o %t.bar.o %S/bar.s
+; RUN: rrisc32-as -o %t.foo.o %S/foo.s
+; RUN: rrisc32-link -o %t.exe %t.bar.o %t.foo.o
 
-RUN: rrisc32-dump --sec %t.exe | filecheck %s --check-prefix=SEC
-RUN: rrisc32-dump --sym %t.exe | filecheck %s --check-prefix=SYM
-RUN: rrisc32-dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT
-RUN: rrisc32-dump --hex .data %t.exe | filecheck %s --check-prefix=DATA
+; RUN: rrisc32-dump --sec %t.exe | filecheck %s --check-prefix=SEC
+; RUN: rrisc32-dump --seg %t.exe | filecheck %s --check-prefix=SEG
+; RUN: rrisc32-dump --sym %t.exe | filecheck %s --check-prefix=SYM
+; RUN: rrisc32-dump --dis .text %t.exe | filecheck %s --check-prefix=TEXT
+; RUN: rrisc32-dump --hex .data %t.exe | filecheck %s --check-prefix=DATA
 
-SEC:      Idx     Addr    Off     Size    Link    Info    AddrAli EntSize Flags   Type    Name
-SEC:      02      1000    1000    2030    00      00      1000    00      AE      PROGBIT .text
-SEC-NEXT: 03      4000    4000    00      00      00      1000    00      A       PROGBIT .rodata
-SEC-NEXT: 04      4000    4000    2014    00      00      1000    00      AW      PROGBIT .data
-SEC-NEXT: 05      7000    7000    00      00      00      1000    00      AW      NOBITS  .bss
+; SEC:      Idx     Addr    Off     Size    Link    Info    AddrAli EntSize Flags   Type    Name
+; SEC:      02      1000    1000    2034    00      00      1000    00      AE      PROGBIT .text
+; SEC-NEXT: 03      4000    4000    00      00      00      1000    00      A       PROGBIT .rodata
+; SEC-NEXT: 04      4000    4000    2014    00      00      1000    00      AW      PROGBIT .data
+; SEC-NEXT: 05      7000    7000    00      00      00      1000    00      AW      NOBITS  .bss
 
-SEG:      Type    Offset  Vaddr   Paddr   Filesz  Memsz   Flags   Align
-SEG-NEXT: LOAD    1000    1000    1000    2030    2030    R E     1000
-SEG-NEXT: LOAD    4000    4000    4000    00      00      R       1000
-SEG-NEXT: LOAD    4000    4000    4000    2014    2014    RW      1000
-SEG-NEXT: LOAD    7000    7000    7000    00      00      RW      1000
+; SEG:      Type    Offset  Vaddr   Paddr   Filesz  Memsz   Flags   Align
+; SEG-NEXT: LOAD    1000    1000    1000    2034    2034    R E     1000
+; SEG-NEXT: LOAD    4000    4000    4000    00      00      R       1000
+; SEG-NEXT: LOAD    4000    4000    4000    2014    2014    RW      1000
+; SEG-NEXT: LOAD    7000    7000    7000    00      00      RW      1000
 
-SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
-SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
-SYM-NEXT: 06      01      00      2030    LOCAL   SECTION DEF     02      .text
-SYM-NEXT: 06      02      00      00      LOCAL   SECTION DEF     03      .rodata
-SYM-NEXT: 06      03      00      2014    LOCAL   SECTION DEF     04      .data
-SYM-NEXT: 06      04      00      00      LOCAL   SECTION DEF     05      .bss
-SYM-NEXT: 06      05      00      00      GLOBAL  NOTYPE  DEF     02      bar_f
-SYM-NEXT: 06      06      00      00      GLOBAL  NOTYPE  DEF     04      bar_x
-SYM-NEXT: 06      07      2028    00      GLOBAL  NOTYPE  DEF     02      foo_g
-SYM-NEXT: 06      08      2010    00      GLOBAL  NOTYPE  DEF     04      foo_x
+; SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
+; SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
+; SYM-NEXT: 06      01      00      2034    LOCAL   SECTION DEF     02      .text
+; SYM-NEXT: 06      02      00      00      LOCAL   SECTION DEF     03      .rodata
+; SYM-NEXT: 06      03      00      2014    LOCAL   SECTION DEF     04      .data
+; SYM-NEXT: 06      04      00      00      LOCAL   SECTION DEF     05      .bss
+; SYM-NEXT: 06      05      00      00      GLOBAL  NOTYPE  DEF     02      bar_f
+; SYM-NEXT: 06      06      00      00      GLOBAL  NOTYPE  DEF     04      bar_x
+; SYM-NEXT: 06      07      202c    00      GLOBAL  NOTYPE  DEF     02      foo_g
+; SYM-NEXT: 06      08      2010    00      GLOBAL  NOTYPE  DEF     04      foo_x
 
-TEXT:      [ Disassembly/.text ]
-TEXT-NEXT: 00001000  lui x1, 3
-TEXT-NEXT: 00001004  jalr x1, x1, 40
-TEXT-NEXT: 00001008  lui x1, 3
-TEXT-NEXT: 0000100c  jalr x1, x1, 44
-TEXT-NEXT: 00001010  lui x1, 6
-TEXT-NEXT: 00001014  lw x1, x1, 16
-TEXT-NEXT: 00001018  lui x1, 6
-TEXT-NEXT: 0000101c  sw x1, x2, 20
-TEXT-NEXT: 00001020  jalr x0, x1, 0
-TEXT:      00003028  add x1, x2, x3
-TEXT-NEXT: 0000302c  jalr x0, x1, 0
+; TEXT:      [ Disassembly/.text ]
+; TEXT-NEXT: 00001000  lui x1, 3
+; TEXT-NEXT: 00001004  jalr x1, x1, 44
+; TEXT-NEXT: 00001008  lui x1, 3
+; TEXT-NEXT: 0000100c  jalr x1, x1, 48
+; TEXT-NEXT: 00001010  lui x1, 6
+; TEXT-NEXT: 00001014  lw x1, x1, 16
+; TEXT-NEXT: 00001018  lui x31, 6
+; TEXT-NEXT: 0000101c  add x31, x31, x1
+; TEXT-NEXT: 00001020  sw x31, x2, 20
+; TEXT-NEXT: 00001024  jalr x0, x1, 0
+; TEXT-NEXT: 00001028  addi x0, x0, 0
+; TEXT:      0000302c  add x1, x2, x3
+; TEXT-NEXT: 00003030  jalr x0, x1, 0
 
-DATA-NEXT: [ Hex/.data ]
-DATA-NEXT: 0000000000004000  40302010 0000302c 40302010 00006010
-DATA:      0000000000006000  ffffffff ffffffff ffffffff ffffffff
-DATA-NEXT: 0000000000006010  01020304
+; DATA:      [ Hex/.data ]
+; DATA-NEXT: 0000000000004000  40302010 00003030 40302010 00006010
+; DATA:      0000000000006000  ffffffff ffffffff ffffffff ffffffff
+; DATA-NEXT: 0000000000006010  01020304

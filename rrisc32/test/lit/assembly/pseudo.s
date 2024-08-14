@@ -72,46 +72,48 @@ far_away:
 # TEXT-NEXT: 00000420  lb x1, x1, 0
 # TEXT-NEXT: 00000424  lui x1, -4088
 # TEXT-NEXT: 00000428  lb x1, x1, -2048
-# TEXT-NEXT: 0000042c  lui x1, 0
-# TEXT-NEXT: 00000430  sb x1, x2, 0
-# TEXT-NEXT: 00000434  lui x1, -4088
-# TEXT-NEXT: 00000438  sb x1, x2, -2048
-# TEXT-NEXT: 0000043c  addi x1, x2, 0
-# TEXT-NEXT: 00000440  xori x1, x2, -1
-# TEXT-NEXT: 00000444  sub x1, x0, x2
-# TEXT-NEXT: 00000448  slli x1, x2, 24
-# TEXT-NEXT: 0000044c  srai x1, x1, 24
-# TEXT-NEXT: 00000450  slli x1, x2, 16
-# TEXT-NEXT: 00000454  srai x1, x1, 16
-# TEXT-NEXT: 00000458  andi x1, x2, 255
-# TEXT-NEXT: 0000045c  slli x1, x2, 16
-# TEXT-NEXT: 00000460  srli x1, x1, 16
-# TEXT-NEXT: 00000464  sltiu x1, x2, 1
-# TEXT-NEXT: 00000468  sltu x1, x0, x2
-# TEXT-NEXT: 0000046c  slt x1, x2, x0
-# TEXT-NEXT: 00000470  slt x1, x0, x2
-# TEXT-NEXT: 00000474  beq x1, x0, -1136
-# TEXT-NEXT: 00000478  bge x0, x1, -1140
-# TEXT-NEXT: 0000047c  blt x2, x1, -1144
-# TEXT-NEXT: 00000480  jal x0, -1148
-# TEXT-NEXT: 00000484  jal x1, -1152
-# TEXT-NEXT: 00000488  jalr x0, x1, 0
-# TEXT-NEXT: 0000048c  jalr x1, x1, 0
+# TEXT-NEXT: 0000042c  lui x31, 0
+# TEXT-NEXT: 00000430  add x31, x31, x1
+# TEXT-NEXT: 00000434  sb x31, x2, 0
+# TEXT-NEXT: 00000438  lui x31, -4088
+# TEXT-NEXT: 0000043c  add x31, x31, x1
+# TEXT-NEXT: 00000440  sb x31, x2, -2048
+# TEXT-NEXT: 00000444  addi x1, x2, 0
+# TEXT-NEXT: 00000448  xori x1, x2, -1
+# TEXT-NEXT: 0000044c  sub x1, x0, x2
+# TEXT-NEXT: 00000450  slli x1, x2, 24
+# TEXT-NEXT: 00000454  srai x1, x1, 24
+# TEXT-NEXT: 00000458  slli x1, x2, 16
+# TEXT-NEXT: 0000045c  srai x1, x1, 16
+# TEXT-NEXT: 00000460  andi x1, x2, 255
+# TEXT-NEXT: 00000464  slli x1, x2, 16
+# TEXT-NEXT: 00000468  srli x1, x1, 16
+# TEXT-NEXT: 0000046c  sltiu x1, x2, 1
+# TEXT-NEXT: 00000470  sltu x1, x0, x2
+# TEXT-NEXT: 00000474  slt x1, x2, x0
+# TEXT-NEXT: 00000478  slt x1, x0, x2
+# TEXT-NEXT: 0000047c  beq x1, x0, -1144
+# TEXT-NEXT: 00000480  bge x0, x1, -1148
+# TEXT-NEXT: 00000484  blt x2, x1, -1152
+# TEXT-NEXT: 00000488  jal x0, -1156
+# TEXT-NEXT: 0000048c  jal x1, -1160
 # TEXT-NEXT: 00000490  jalr x0, x1, 0
-# TEXT-NEXT: 00000494  lui x1, 0
-# TEXT-NEXT: 00000498  jalr x1, x1, 0
-# TEXT-NEXT: 0000049c  lui x6, 0
-# TEXT-NEXT: 000004a0  jalr x0, x6, 0
-# TEXT-NEXT: 000004a4  addi x2, x2, -4
-# TEXT-NEXT: 000004a8  sw x2, x1, 0
-# TEXT-NEXT: 000004ac  addi x2, x2, 4
-# TEXT-NEXT: 000004b0  lw x1, x2, 0
+# TEXT-NEXT: 00000494  jalr x1, x1, 0
+# TEXT-NEXT: 00000498  jalr x0, x1, 0
+# TEXT-NEXT: 0000049c  lui x1, 0
+# TEXT-NEXT: 000004a0  jalr x1, x1, 0
+# TEXT-NEXT: 000004a4  lui x6, 0
+# TEXT-NEXT: 000004a8  jalr x0, x6, 0
+# TEXT-NEXT: 000004ac  addi x2, x2, -4
+# TEXT-NEXT: 000004b0  sw x2, x1, 0
 # TEXT-NEXT: 000004b4  addi x2, x2, 4
-# TEXT-NEXT: 000004b8  addi x1, x0, -1
+# TEXT-NEXT: 000004b8  lw x1, x2, 0
+# TEXT-NEXT: 000004bc  addi x2, x2, 4
+# TEXT-NEXT: 000004c0  addi x1, x0, -1
 
 # SEC:      Idx     Addr    Off     Size    Link    Info    AddrAli EntSize Flags   Type    Name
 # SEC-NEXT: 01      00      34      4c      00      00      01      00              STRTAB  .shstrtab
-# SEC-NEXT: 02      00      0400    04bc    00      00      0400    00      AE      PROGBIT .text
+# SEC-NEXT: 02      00      0400    04c4    00      00      0400    00      AE      PROGBIT .text
 # SEC-NEXT: 03      00      0c00    0404    00      00      0400    00      A       PROGBIT .rodata
 # SEC-NEXT: 04      00      1004    00      00      00      04      00      AW      PROGBIT .data
 # SEC-NEXT: 05      00      1004    00      00      00      04      00      AW      NOBITS  .bss
@@ -122,7 +124,7 @@ far_away:
 
 # SYM:      SecBeTo Idx     Value   Size    Bind    Type    Vis     Sec     Name
 # SYM-NEXT: 06      00      00      00      LOCAL   NOTYPE  DEF     UND
-# SYM-NEXT: 06      01      00      04bc    LOCAL   SECTION DEF     02      .text
+# SYM-NEXT: 06      01      00      04c4    LOCAL   SECTION DEF     02      .text
 # SYM-NEXT: 06      02      00      0404    LOCAL   SECTION DEF     03      .rodata
 # SYM-NEXT: 06      03      00      00      LOCAL   SECTION DEF     04      .data
 # SYM-NEXT: 06      04      00      00      LOCAL   SECTION DEF     05      .bss
@@ -135,9 +137,9 @@ far_away:
 # REL-NEXT: 08      02      041c    HI20    0       06      06      02
 # REL-NEXT: 08      03      0420    LO12_I  0       06      06      02
 # REL-NEXT: 08      04      042c    HI20    0       06      06      02
-# REL-NEXT: 08      05      0430    LO12_S  0       06      06      02
-# REL-NEXT: 08      06      0494    HI20    0       05      06      02
-# REL-NEXT: 08      07      0498    LO12_I  0       05      06      02
-# REL-NEXT: 08      08      049c    HI20    0       05      06      02
-# REL-NEXT: 08      09      04a0    LO12_I  0       05      06      02
+# REL-NEXT: 08      05      0434    LO12_S  0       06      06      02
+# REL-NEXT: 08      06      049c    HI20    0       05      06      02
+# REL-NEXT: 08      07      04a0    LO12_I  0       05      06      02
+# REL-NEXT: 08      08      04a4    HI20    0       05      06      02
+# REL-NEXT: 08      09      04a8    LO12_I  0       05      06      02
 # REL-NEXT: 09      00      0400    32      0       05      06      03
