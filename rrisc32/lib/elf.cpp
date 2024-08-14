@@ -322,28 +322,32 @@ const std::vector<segment *> &RRisc32Reader::getLoadSegments() {
   return segments;
 }
 
-void RRisc32Reader::dumpDisassembly(std::ostream &os) {
-  forEachSection([this, &os](const section &sec) {
+void RRisc32Reader::dumpDisassembly(std::ostream &os, bool annotate) {
+  forEachSection([this, &os, annotate](const section &sec) {
     if (sec.get_type() == SHT_PROGBITS && sec.get_flags() & SHF_EXECINSTR)
-      dumpDisassembly(os, sec);
+      dumpDisassembly(os, sec, annotate);
   });
 }
 
-void RRisc32Reader::dumpDisassembly(std::ostream &os, const section &sec) {
+void RRisc32Reader::dumpDisassembly(std::ostream &os, const section &sec,
+                                    bool annotate) {
   const char *s = sec.get_data();
   Elf_Xword n = sec.get_size();
   Elf64_Addr addr = sec.get_address();
   os << "[ Disassembly/" << sec.get_name() << " ]\n";
   for (Elf_Xword i = 0; i + 4 <= n; i += 4) {
+    if (annotate && addr2Symbol.contains(addr + i))
+      os << addr2Symbol[addr + i].name << ":\n";
     u32 b = *reinterpret_cast<const u32 *>(s + i);
     os << toHexStr(static_cast<u32>(addr + i), false, false) << "  "
        << rrisc32::test::decode(b) << "\n";
   }
 }
 
-void RRisc32Reader::dumpDisassembly(std::ostream &os, const std::string &name) {
+void RRisc32Reader::dumpDisassembly(std::ostream &os, const std::string &name,
+                                    bool annotate) {
   if (name2Section.contains(name))
-    dumpDisassembly(os, *name2Section[name]);
+    dumpDisassembly(os, *name2Section[name], annotate);
 }
 
 void RRisc32Reader::check() {

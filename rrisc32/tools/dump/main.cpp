@@ -3,6 +3,7 @@
 
 #include "cli.h"
 #include "elf.h"
+#include "rrisc32.h"
 
 namespace {
 
@@ -13,14 +14,18 @@ struct Opts {
   bool dumpSections = false;
   bool dumpSymbols = false;
   bool dumpRelocations = false;
+  bool regNameX = true;
 
   std::vector<std::string> dumpHex;
   std::vector<std::string> dumpDisassembly;
+
+  bool annotate = false;
 
   std::string filename;
 };
 
 void dump(const Opts &o) {
+  rrisc32::setRegNameX(o.regNameX);
   TRY()
   elf::RRisc32Reader reader(o.filename);
   if (o.dumpELFHeader || o.dumpAll)
@@ -36,7 +41,7 @@ void dump(const Opts &o) {
   for (const std::string &name : o.dumpHex)
     reader.dumpHex(std::cout, name);
   for (const std::string &name : o.dumpDisassembly)
-    reader.dumpDisassembly(std::cout, name);
+    reader.dumpDisassembly(std::cout, name, o.annotate);
   CATCH()
 }
 
@@ -52,10 +57,12 @@ int main(int argc, char **argv) {
   app.add_flag("--sec", o.dumpSections, "Display section headers");
   app.add_flag("--sym", o.dumpSymbols, "Display symbols");
   app.add_flag("--rel", o.dumpRelocations, "Display relocations");
+  app.add_flag("--annotate", o.annotate, "Annotate disassembly");
   app.add_option("--hex", o.dumpHex, "Display hex of sections")
       ->type_name("SEC");
   app.add_option("--dis", o.dumpDisassembly, "Display disassembly of sections")
       ->type_name("SEC");
+  app.add_option("--reg-name-x", o.regNameX);
   app.add_option("<file>", o.filename)->required()->type_name("");
 
   ADD_DEBUG_OPT(app);

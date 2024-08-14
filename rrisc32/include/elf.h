@@ -121,14 +121,24 @@ public:
       if (seg.get_type() == elf::PT_LOAD && seg.get_memory_size() > 0)
         segments.push_back(&seg);
     });
+
+    forEachSymbol([this](const Symbol &sym) {
+      if (0 < sym.sec && sym.sec < ei.sections.size()) {
+        u32 addr = sym.value + ei.sections[sym.sec]->get_address();
+        this->addr2Symbol[addr] = sym;
+      }
+    });
+
     check();
   }
 
   const std::vector<segment *> &getLoadSegments();
 
-  void dumpDisassembly(std::ostream &os);
-  void dumpDisassembly(std::ostream &os, const section &sec);
-  void dumpDisassembly(std::ostream &os, const std::string &name);
+  void dumpDisassembly(std::ostream &os, bool annotate = false);
+  void dumpDisassembly(std::ostream &os, const section &sec,
+                       bool annotate = false);
+  void dumpDisassembly(std::ostream &os, const std::string &name,
+                       bool annotate = false);
 
 private:
   void check();
@@ -140,6 +150,8 @@ private:
 
   void checkSymbols();
   void checkRelocations();
+
+  std::map<u32, Symbol> addr2Symbol;
 
   std::vector<segment *> segments;
 

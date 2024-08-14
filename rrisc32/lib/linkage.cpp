@@ -169,11 +169,14 @@ void Linker::saveToFile() {
       if (sym.sec == elf::SHN_UNDEF || sym.type == elf::STT_SECTION)
         continue;
       switch (sym.bind) {
-      case elf::STB_LOCAL:
+      case elf::STB_LOCAL: {
+        if (sym.name.starts_with(".L"))
+          break;
         if (oSym->oSec)
           sym.sec = oSym->oSec->sec->get_index();
         writer.addSymbol(&sym);
         break;
+      }
       default:;
       }
     }

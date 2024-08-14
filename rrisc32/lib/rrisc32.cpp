@@ -15,7 +15,7 @@ const std::string reg2NameX[] = {
 
 const std::string reg2Name[] = {
     "zero", "ra", "sp",  "gp",  "tp", "t0", "t1", "t2",
-    "s0",   "s1", "a0",  "a1",  "a2", "a3", "a4", "a5",
+    "fp",   "s1", "a0",  "a1",  "a2", "a3", "a4", "a5",
     "a6",   "a7", "s2",  "s3",  "s4", "s5", "s6", "s7",
     "s8",   "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 // clang-format on
@@ -23,17 +23,21 @@ const std::string reg2Name[] = {
 std::map<std::string, u32> name2Reg;
 
 void initRegisterInfo() {
-  for (u32 i = 0; i < 31; ++i) {
+  for (u32 i = 0; i < 32; ++i) {
     name2Reg[reg2NameX[i]] = i;
     name2Reg[reg2Name[i]] = i;
-    if (reg2Name[i] == "s0")
-      name2Reg["fp"] = i;
+    if (reg2Name[i] == "fp")
+      name2Reg["s0"] = i;
   }
 }
 
-const std::string &getRegName(u32 i, bool x = true) {
+static bool regNameX = true;
+
+void setRegNameX(bool x) { regNameX = x; }
+
+const std::string &getRegName(u32 i) {
   if (i < 32)
-    return x ? reg2NameX[i] : reg2Name[i];
+    return regNameX ? reg2NameX[i] : reg2Name[i];
   UNKNOWN_REGISTER(i);
 }
 
