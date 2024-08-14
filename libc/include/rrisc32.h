@@ -11,4 +11,7 @@
 
 #include "syscall.inc"
 
+#define EOF (-1)
+#define NULL ((void *)0)
+
 #endif

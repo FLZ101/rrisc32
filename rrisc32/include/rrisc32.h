@@ -45,11 +45,15 @@ public:
   void wi(u32 value) { ip = value; }
 
   template <typename T = s32> T rr(unsigned i) {
+    if (i == 0)
+      return 0;
     assert(i < 32);
     return static_cast<T>(reg[i]);
   }
 
   void wr(unsigned i, s32 value) {
+    if (i == 0)
+      return;
     assert(i < 32);
     reg[i] = value;
   }

@@ -250,12 +250,14 @@ class Asm:
                                 self.emit(f"lw {r1}, +(${_name} {_offset})")
                             case 2:
                                 assert isinstance(ty, IntType)
-                                instr = "lhu" if ty._unsigned else "lh"
-                                self.emit(f"{instr} {r1}, +(${_name} {_offset})")
+                                self.emit(
+                                    f'{"lhu" if ty._unsigned else "lh"} {r1}, +(${_name} {_offset})'
+                                )
                             case 1:
                                 assert isinstance(ty, IntType)
-                                instr = "lbu" if ty._unsigned else "lb"
-                                self.emit(f"{instr} {r1}, +(${_name} {_offset})")
+                                self.emit(
+                                    f'{"lbu" if ty._unsigned else "lb"} {r1}, +(${_name} {_offset})'
+                                )
                             case _:
                                 unreachable()
 
@@ -300,10 +302,10 @@ class Asm:
                                 self.emit(f"lw {r1}, a0, 0")
                             case 2:
                                 assert isinstance(ty, IntType)
-                                self.emit(f'{"lhu" if ty._unsigned else "lh"}, {r1}, a0, 0')
+                                self.emit(f'{"lhu" if ty._unsigned else "lh"} {r1}, a0, 0')
                             case 1:
                                 assert isinstance(ty, IntType)
-                                self.emit(f'{"lbu" if ty._unsigned else "lb"}, {r1}, a0, 0')
+                                self.emit(f'{"lbu" if ty._unsigned else "lb"} {r1}, a0, 0')
                             case _:
                                 unreachable()
 

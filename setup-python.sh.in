@@ -14,4 +14,4 @@ if [[ ! -e python ]] ; then
   pip install -U pip
 fi
 
-pip install -r $cmake_source_dir/requirements.txt
+pip install -q -r $cmake_source_dir/requirements.txt

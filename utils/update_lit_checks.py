@@ -7,6 +7,7 @@ from typing import Optional
 
 comment_prefix = None
 
+
 class Run:
     def __init__(self, cmd: str, check: str) -> None:
         self.cmd = cmd
@@ -67,7 +68,7 @@ def main():
     args = parser.parse_args()
 
     infile = args.infile
-    lines:list[str] = []
+    lines: list[str] = []
     with open(infile) as ifs:
         for line in ifs:
             line = line.rstrip()
@@ -76,9 +77,9 @@ def main():
     global comment_prefix
 
     for line in lines:
-        if line == '':
+        if line == "":
             continue
-        idx = line.find(' RUN:')
+        idx = line.find(" RUN:")
         if idx != -1:
             comment_prefix = line[:idx].strip()
         break

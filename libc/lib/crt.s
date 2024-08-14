@@ -7,7 +7,9 @@ start:
     push a1 # argv
     push a0 # argc
     call $main
-    push a0
-    mv a1, a0 # exit
+    addi sp, sp, 8
+    # exit
+    mv a1, a0
     li a0, 0
     ecall
+    .size $start, -($. $start)

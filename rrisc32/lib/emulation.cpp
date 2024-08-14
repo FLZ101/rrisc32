@@ -349,7 +349,7 @@ void Emulator::run() {
 
   while (!exited) {
     u32 b = fetch();
-    LOG("FETCH", rrisc32::test::decode(b));
+    LOG("FETCH", toHexStr(ip - 4, false, false), rrisc32::test::decode(b));
     rrisc32::execute(*this, b);
   }
 }

@@ -1,5 +1,11 @@
+file(CREATE_LINK
+    ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_BINARY_DIR}/include
+    SYMBOLIC)
+
 set(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/lib/syscall.c
+    lib/stdio.c
+    lib/string.c
 )
 
 add_custom_command(
@@ -15,7 +21,7 @@ add_custom_command(
         --archive --include include --nostdinc
         -o ${CMAKE_BINARY_DIR}/lib/libc.a
         ${FILES}
-    DEPENDS rrisc32-compile ${FILES}
+    DEPENDS rrisc32-compile ${CMAKE_BINARY_DIR}/bin/rrisc32-cc ${FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_custom_command(
@@ -24,7 +30,7 @@ add_custom_command(
         --assemble
         -o ${CMAKE_BINARY_DIR}/lib/crt.o
        lib/crt.s
-    DEPENDS rrisc32-compile lib/crt.s
+    DEPENDS rrisc32-compile ${CMAKE_BINARY_DIR}/bin/rrisc32-cc lib/crt.s
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_custom_target(libc ALL
