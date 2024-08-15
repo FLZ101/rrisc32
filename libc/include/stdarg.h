@@ -11,7 +11,7 @@ typedef void *va_list;
   } while (0)
 
 #define va_arg(ap, T)                                                          \
-  ((ap) += 4, *(T *)((ap) - 4))
+  ((ap) += P2ALIGN(sizeof(T), 2), *(T *)((ap) - P2ALIGN(sizeof(T), 2)))
 
 #define va_end(ap)                                                             \
   do {                                                                         \

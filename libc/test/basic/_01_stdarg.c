@@ -4,20 +4,17 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-void print(unsigned n, char *t, ...) {
+void print(unsigned n, char *s1, char *s2, char *s3, ...) {
   va_list ap;
   va_start(ap, n);
-  char *s = *(char **)ap;
-  putl(s);
-//   ap += 4;
-//   s = *(char **)ap
-//   putl(s);
-  va_end(ap);
+  for (unsigned i = 0; i < n; ++i) {
+    char *s = va_arg(ap, char *);
+    putl(s);
+  }
 }
 
 int main() { print(3, "quick", "brown", "fox"); }
 
-
-
-
-// CHECK-NEXT: quick
+// CHECK:      quick
+// CHECK-NEXT: brown
+// CHECK-NEXT: fox

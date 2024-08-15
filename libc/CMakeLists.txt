@@ -2,10 +2,17 @@ file(CREATE_LINK
     ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_BINARY_DIR}/include
     SYMBOLIC)
 
-set(FILES
+set(C_FILES
     ${CMAKE_CURRENT_BINARY_DIR}/lib/syscall.c
     lib/stdio.c
     lib/string.c
+)
+
+set(H_FILES
+    include/rrisc32.h
+    include/stdarg.h
+    include/stdio.h
+    include/string.h
 )
 
 add_custom_command(
@@ -20,8 +27,8 @@ add_custom_command(
     COMMAND ${CMAKE_BINARY_DIR}/bin/rrisc32-cc
         --archive --include include --nostdinc
         -o ${CMAKE_BINARY_DIR}/lib/libc.a
-        ${FILES}
-    DEPENDS rrisc32-compile ${CMAKE_BINARY_DIR}/bin/rrisc32-cc ${FILES}
+        ${C_FILES}
+    DEPENDS rrisc32-compile ${CMAKE_BINARY_DIR}/bin/rrisc32-cc ${C_FILES} ${H_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_custom_command(
