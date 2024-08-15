@@ -940,6 +940,8 @@ class Codegen(NodeVisitor):
                     self._asm.emit("or a0, a0, a1")
                 self._asm.emitLabel(labelEnd)
                 self._asm.emit("snez a0, a0")
+
+                self.setNodeValue(node, TemporaryValue(ty))
                 return
 
         self._asm.push(node.right)
@@ -1077,7 +1079,7 @@ class Codegen(NodeVisitor):
             case _:
                 unreachable()
 
-        self.setNodeValue(node, TemporaryValue(self.getNodeType(node)))
+        self.setNodeValue(node, TemporaryValue(ty))
 
     # Assignment also returns the same value as what was stored in lhs
     # (so that expressions such as a = b = c are possible). The value

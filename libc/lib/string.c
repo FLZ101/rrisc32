@@ -1,4 +1,4 @@
-// #include <string.h>
+#include <string.h>
 
 unsigned strlen(char *s) {
   unsigned n = 0;

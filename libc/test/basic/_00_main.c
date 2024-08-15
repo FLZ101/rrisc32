@@ -5,8 +5,7 @@
 
 int main(int argc, char *argv[]) {
   for (int i = 0; i < argc; ++i) {
-    puts(argv[i]);
-    putc('\n');
+    putl(argv[i]);
   }
   return 0;
 }
