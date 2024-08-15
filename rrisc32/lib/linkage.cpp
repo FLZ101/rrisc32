@@ -210,23 +210,29 @@ void Linker::applyRelocations() {
 
       char *addr = oRel->getAddr();
       u32 x = readLE<u32>(addr);
+      LOG("relocate", oSym->sym.name, toHexStr(x, false, false),
+          toHexStr(v, false, false));
       switch (rel.type) {
       case elf::R_RRISC32_32:
+        LOG("relocate", "R_RRISC32_32");
         x = static_cast<u32>(v);
         break;
       case elf::R_RRISC32_HI20: {
+        LOG("relocate", "R_RRISC32_HI20");
         s32 imm = hi20(v);
         x &= 0xfff;
         x |= imm << 12;
         break;
       }
       case elf::R_RRISC32_LO12_I: {
+        LOG("relocate", "R_RRISC32_LO12_I");
         s32 imm = lo12(v);
         x &= 0xfffff;
         x |= imm << 20;
         break;
       }
       case elf::R_RRISC32_LO12_S: {
+        LOG("relocate", "R_RRISC32_LO12_S");
         s32 imm = lo12(v);
         s32 y = 0;
         y |= x & 0x7f;
@@ -239,6 +245,7 @@ void Linker::applyRelocations() {
       default:
         THROW(LinkageError, "unknown relocation type", toHexStr(rel.type));
       }
+      LOG("relocate", toHexStr(x, false, false));
       writeLE(addr, x);
     }
   }

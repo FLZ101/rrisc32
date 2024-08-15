@@ -37,7 +37,7 @@ def get_run(line: str) -> Optional[Run]:
 
 
 def is_check(line: str, check: str):
-    m = re.fullmatch(f" *{re.escape(comment_prefix)} +%s(-[A-Z]+)?:(.+)" % check, line)
+    m = re.fullmatch(f" *{re.escape(comment_prefix)} +%s(-[A-Z]+)?:(.*)" % check, line)
     return m is not None
 
 

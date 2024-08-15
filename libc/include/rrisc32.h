@@ -14,4 +14,7 @@
 #define EOF (-1)
 #define NULL ((void *)0)
 
+#define ALIGN(x, n) (((x) + ((n) - 1)) & ~((n) - 1))
+#define P2ALIGN(x, n) ALIGN((x), (1 << (n)))
+
 #endif

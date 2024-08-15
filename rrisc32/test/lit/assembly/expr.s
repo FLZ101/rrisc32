@@ -12,4 +12,4 @@
 # TEXT-NEXT: 00000000  addi x1, x2, 11
 
 # DATA:      [ Hex/.data ]
-# DATA-NEXT: 0000000000000000  000ffff9 00000888
+# DATA-NEXT: 0000000000000000  fffffffa fffff888

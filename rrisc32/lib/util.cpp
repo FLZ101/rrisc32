@@ -178,9 +178,9 @@ bool log2(u64 x, u8 &y) {
   return x == 1;
 }
 
-s32 hi20(s32 x) { return x >> 12 & 0xfffff; }
+s32 hi20(s32 x) { return (x + 0x800) >> 12; }
 
-s32 lo12(s32 x) { return x & 0xfff; }
+s32 lo12(s32 x) { return x - (hi20(x) << 12); }
 
 bool checkImmRangeIS(s64 imm) { return checkImmRange<12>(imm); }
 
