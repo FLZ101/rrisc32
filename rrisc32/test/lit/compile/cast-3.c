@@ -105,7 +105,8 @@ void f() {
   c = uc;
   ull = ll;
 
-// CC-NEXT:     lb a0, fp, -24
+// CC-NEXT:     lbu a0, fp, -24
+// CC-NEXT:     sext.b a0, a0
 // CC-NEXT:     push a0
 // CC-NEXT:     pop a2
 // CC-NEXT:     sb fp, a2, -4

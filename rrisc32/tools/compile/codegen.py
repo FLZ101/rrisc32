@@ -785,6 +785,12 @@ class Codegen(NodeVisitor):
     def visit_Cast(self, node: c_ast.Cast):
         t1 = self.getNodeType(node.to_type)
         v2, t2 = self.getNodeValueType(node.expr)
+        sz1 = t1.size()
+        sz2 = t2.size()
+
+        def _reinterpret():
+            self._asm.load(v2)
+            self.setNodeValue(node, TemporaryValue(t1))
 
         match t1, t2:
             # array to pointer conversion
@@ -810,58 +816,36 @@ class Codegen(NodeVisitor):
 
             # integer conversion
             case IntType(), IntType():
-
-                def _getV():
-                    sz1 = t1.size()
-                    sz2 = t2.size()
-                    if sz1 == sz2:
-                        v2._type = t1
-                        return v2
-
-                    if sz1 > sz2:
-                        self._asm.load(v2)
-                        if sz1 == 8:
+                self._asm.load(v2)
+                match sz1:
+                    case 8:
+                        if sz2 < 8:
                             self._asm.emit("srai a1, a0, 31")
-                        return TemporaryValue(t1)
+                    case 4:
+                        pass
+                    case 2:
+                        if t1._unsigned:
+                            self._asm.emit("zext.h a0, a0")
+                        else:
+                            self._asm.emit("sext.h a0, a0")
+                    case 1:
+                        if t1._unsigned:
+                            self._asm.emit("zext.b a0, a0")
+                        else:
+                            self._asm.emit("sext.b a0, a0")
+                    case _:
+                        unreachable()
 
-                    self._asm.load(v2)
-                    match sz1:
-                        case 4:
-                            pass
-                        case 2:
-                            if t1._unsigned:
-                                self._asm.emit("zext.h a0, a0")
-                            else:
-                                self._asm.emit("sext.h a0, a0")
-                        case 1:
-                            if t1._unsigned:
-                                self._asm.emit("zext.b a0, a0")
-                            else:
-                                self._asm.emit("sext.b a0, a0")
-                        case _:
-                            unreachable()
-                    return TemporaryValue(t1)
-
-                self.setNodeValue(node, _getV())
+                self.setNodeValue(node, TemporaryValue(t1))
 
             case PointerType(), PointerType():
-                v2._type = t1
-                self.setNodeValue(node, v2)
+                _reinterpret()
 
             # Any integer can be cast to any pointer type.
-            case PointerType(), IntType():
-                if t2.size() >= 4:
-                    v2._type = t1
-                    self.setNodeValue(node, v2)
-                else:
-                    self._asm.load(v2)
-                    self.setNodeValue(node, TemporaryValue(t1))
-
             # Any pointer type can be cast to any integer type.
-            case IntType(), PointerType():
-                if t1.size() == t2.size():
-                    v2._type = t1
-                    self.setNodeValue(node, v2)
+            case (PointerType(), IntType()) | (IntType(), PointerType()):
+                if sz1 == sz2:
+                    _reinterpret()
                 else:
                     node.expr = c_ast.Cast(Node(getBuiltinType("unsigned long")), node.expr)
                     self.visit_Cast(node)
@@ -965,7 +949,7 @@ class Codegen(NodeVisitor):
                         if sz > 1:
                             self._asm.emit(f"slli a2, a2, {log2(sz)}")
                     elif isinstance(tyR, PointerType):  # i + p
-                        sz = tyR._base.size()
+                        sz = 0 if tyR._base.isVoid() else tyR._base.size()
                         if sz > 1:
                             self._asm.emit(f"slli a0, a0, {log2(sz)}")
                     self._asm.emit("add a0, a0, a2")

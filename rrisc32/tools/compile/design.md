@@ -217,6 +217,11 @@
     => mv ay, ax
 
   mv ax, ax =>
+
+  lbu a0, fp, -24
+  sext.b a0, a0
+
+    => lb a0, fp, -24
   ```
 
 * t6 is reserved for assembler
