@@ -21,6 +21,8 @@ class MemoryAccess(LValue):
         ty = addr.getType()
         assert isinstance(ty, PointerType)
 
+        assert not isinstance(addr, MemoryAccess)
+
         super().__init__(ty._base)
         self._addr = addr
 
@@ -862,6 +864,9 @@ class Codegen(NodeVisitor):
 
             case "*":
                 v = self.getNodeValue(node.expr)
+                if isinstance(v, MemoryAccess):
+                    self._asm.load(v)
+                    v = TemporaryValue(v.getType())
                 self.setNodeValue(node, MemoryAccess(v))
                 return
 
