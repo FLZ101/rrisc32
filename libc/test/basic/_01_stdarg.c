@@ -4,7 +4,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-void print(unsigned n, char *s1, char *s2, char *s3, ...) {
+void print(unsigned n, ...) {
   va_list ap;
   va_start(ap, n);
   for (unsigned i = 0; i < n; ++i) {

@@ -77,7 +77,6 @@ int vsprintf(char *__buf, const char *fmt, va_list ap) {
         sputc(buf, va_arg(ap, char));
         break;
       case 's':
-        sputc(buf, 'S');
         sputs(buf, va_arg(ap, char *));
         break;
       case '%':
@@ -112,6 +111,16 @@ int fprintf(int fd, const char *fmt, ...) {
 
   va_start(ap, fmt);
   int res = vfprintf(fd, fmt, ap);
+  va_end(ap);
+
+  return res;
+}
+
+int printf(const char *fmt, ...) {
+  va_list ap;
+
+  va_start(ap, fmt);
+  int res = vfprintf(STDOUT, fmt, ap);
   va_end(ap);
 
   return res;

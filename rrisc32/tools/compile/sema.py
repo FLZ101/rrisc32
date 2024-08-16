@@ -621,6 +621,17 @@ def getArithmeticCommonType(t1: IntType, t2: IntType):
     return t2
 
 
+def promoteArgType(ty: Type):
+    match ty:
+        case IntType():
+            return promoteIntType(ty)
+        case ArrayType():
+            return PointerType(ty._base)
+        case FunctionType():
+            return PointerType(ty)
+    return ty
+
+
 class Node(c_ast.Node):
     def __init__(self, v: Value | Type) -> None:
         match v:
@@ -1903,7 +1914,7 @@ class Sema(NodeVisitor):
                     if i < len(tyF._args):
                         args[i] = self.convert(tyF._args[i], args[i])
                     else:
-                        self.visit(args[i])
+                        args[i] = self.convert(promoteArgType(self.getNodeType(args[i])), args[i])
 
                 self.setNodeTypeR(node, tyF._ret)
             case _:
