@@ -5,6 +5,7 @@ file(CREATE_LINK
 set(C_FILES
     ${CMAKE_CURRENT_BINARY_DIR}/lib/syscall.c
     lib/stdio.c
+    lib/printf.c
     lib/string.c
 )
 

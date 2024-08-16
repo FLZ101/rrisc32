@@ -908,6 +908,8 @@ class Codegen(NodeVisitor):
         ty = self.getNodeType(node)
         tyL = self.getNodeType(node.left)
         tyR = self.getNodeType(node.right)
+        rL = self.getNodeRecord(node.left)
+        rR = self.getNodeRecord(node.right)
 
         assert tyL.size() == tyR.size()
 
@@ -932,6 +934,17 @@ class Codegen(NodeVisitor):
 
                 self.setNodeValue(node, TemporaryValue(ty))
                 return
+
+            case "+":
+                match rL._value, rR._value:
+                    case IntConstant(_i=0) | PtrConstant(_i=0), Value():
+                        self._asm.load(node.right)
+                        self.setNodeValue(node, TemporaryValue(ty))
+                        return
+                    case Value(), IntConstant(_i=0) | PtrConstant(_i=0):
+                        self._asm.load(node.left)
+                        self.setNodeValue(node, TemporaryValue(ty))
+                        return
 
         self._asm.push(node.right)
         self._asm.load(node.left)
