@@ -47,22 +47,27 @@ void f()
 // CC-NEXT:     .type $__builtin_memcpy, "function"
 // CC-NEXT:     .align 2
 // CC-NEXT: __builtin_memcpy:
+// CC-NEXT:     push ra
+// CC-NEXT:     push fp
+// CC-NEXT:     mv fp, sp
 // CC-NEXT:     lw a0, fp, 8
 // CC-NEXT:     lw a1, fp, 12
 // CC-NEXT:     lw a2, fp, 16
-// CC-NEXT:     blez    a2, $2f
-// CC-NEXT:     add     a3, a1, a2
+// CC-NEXT:     blez a2, $2f
+// CC-NEXT:     add a3, a1, a2
 // CC-NEXT: 1:
-// CC-NEXT:     lbu     a4, a1, 0
-// CC-NEXT:     addi    a5, a1, 1
-// CC-NEXT:     addi    a2, a0, 1
-// CC-NEXT:     sb      a0, a4, 0
-// CC-NEXT:     mv      a0, a2
-// CC-NEXT:     mv      a1, a5
-// CC-NEXT:     bltu    a5, a3, $1b
-// CC-NEXT:     mv      a0, a2
-// CC-NEXT:     ret
+// CC-NEXT:     lbu a4, a1, 0
+// CC-NEXT:     addi a5, a1, 1
+// CC-NEXT:     addi a2, a0, 1
+// CC-NEXT:     sb a0, a4, 0
+// CC-NEXT:     mv a0, a2
+// CC-NEXT:     mv a1, a5
+// CC-NEXT:     bltu a5, a3, $1b
+// CC-NEXT:     mv a0, a2
 // CC-NEXT: 2:
+// CC-NEXT:     mv sp, fp
+// CC-NEXT:     pop fp
+// CC-NEXT:     pop ra
 // CC-NEXT:     ret
 // CC-NEXT:     .size $__builtin_memcpy, -($. $__builtin_memcpy)
 // CC-NEXT:

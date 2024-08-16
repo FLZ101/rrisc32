@@ -447,10 +447,12 @@ class Asm:
                 else:
                     self.emit(f"bnez a0, ${label}")
 
-    def emitPrelogue(self):
+    def emitPrelogue(self, szLocal: Optional[int] = None):
         self.emit(["push ra", "push fp", "mv fp, sp"])
-        if self._cg._func._maxOffset > 0:
-            self.emit(f"addi sp, sp, {-self._cg._func._maxOffset}")
+        if szLocal is None:
+            szLocal = self._cg._func._maxOffset
+        if szLocal > 0:
+            self.emit(f"addi sp, sp, {-szLocal}")
 
     def emitEpilogue(self):
         self.emit(["mv sp, fp", "pop fp", "pop ra"])
@@ -506,6 +508,8 @@ class Asm:
         sec.add(".align 2")
         sec.addLabel(f"{name}")
 
+        self.emitPrelogue(0)
+
         # load arguments
         self.load(Argument("s", PointerType(getBuiltinType("void")), 8), "a0")
         self.load(Argument("c", getBuiltinType("int"), 12), "a1")
@@ -522,9 +526,9 @@ class Asm:
             mv a3, a4
             bltu a4, a2, $1b
         2:
-            ret
             """
         )
+        self.emitRet()
         sec.add(f".size ${name}, -($. ${name})")
 
     """
@@ -547,6 +551,8 @@ class Asm:
         sec.add(".align 2")
         sec.addLabel(f"{name}")
 
+        self.emitPrelogue(0)
+
         # load arguments
         self.load(Argument("dest", PointerType(getBuiltinType("void")), 8), "a0")
         self.load(Argument("src", PointerType(getBuiltinType("void")), 12), "a1")
@@ -565,11 +571,10 @@ class Asm:
             mv a1, a5
             bltu a5, a3, $1b
             mv a0, a2
-            ret
         2:
-            ret
             """
         )
+        self.emitRet()
         sec.add(f".size ${name}, -($. ${name})")
 
     def _emitBuiltins(self):
