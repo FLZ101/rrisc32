@@ -232,7 +232,7 @@ class FunctionType(Type):
 
         def _cook(ty: Type):
             if isinstance(ty, ArrayType):
-                return PointerType(_cook(ty._base))
+                return PointerType(ty._base)
             if isinstance(ty, StructType):
                 raise CCNotImplemented("pass/return struct")
             if isinstance(ty, FunctionType):

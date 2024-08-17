@@ -7,6 +7,7 @@ set(C_FILES
     lib/stdio.c
     lib/printf.c
     lib/string.c
+    lib/setjmp.c
 )
 
 set(H_FILES
@@ -14,6 +15,7 @@ set(H_FILES
     include/stdarg.h
     include/stdio.h
     include/string.h
+    include/setjmp.h
 )
 
 add_custom_command(

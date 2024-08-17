@@ -642,6 +642,9 @@ class Codegen(NodeVisitor):
         if not node.name:
             return
 
+        if "extern" in node.quals:
+            return
+
         def _gen(init: c_ast.Node, offset: int, _local: bool):
             ty = self.getNodeType(init)
             assert offset == align(offset, ty.alignment())
@@ -782,6 +785,8 @@ class Codegen(NodeVisitor):
 
         if isFuncBody:
             if len(block_items) == 0 or not isinstance(block_items[-1], c_ast.Return):
+                if self._func._name == 'main':
+                    self._asm.load(getIntConstant(0))
                 self._asm.emitRet()
 
     def visit_Return(self, node: c_ast.Return):
@@ -1271,3 +1276,10 @@ class Codegen(NodeVisitor):
                 self._asm.emitLabel(inst[:-1])
             else:
                 self._asm.emit(inst)
+
+    def visit_Typedef(self, _: c_ast.Typedef):
+        match self.getParent():
+            case c_ast.FileAST():
+                pass
+            case _:
+                unreachable()
