@@ -480,7 +480,7 @@ class Asm:
             case SymConstant() as sym:
                 self.emit(f"call ${sym._name}")
             case c_ast.Node() as node:
-                self.load(node.name)  # load function address
+                self.load(node)  # load function address
                 self.emit(f"jalr a0")
             case _:
                 unreachable()
