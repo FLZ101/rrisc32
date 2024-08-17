@@ -51,7 +51,7 @@ def gen_checks(infile, run: Run) -> list[str]:
 
     checks = []
     if not run.check:
-        subprocess.run(["/bin/bash", "-c", cmd])
+        subprocess.run(["/bin/bash", "-c", cmd], check=True)
     else:
         cp = subprocess.run(
             ["/bin/bash", "-c", cmd], stdout=subprocess.PIPE, encoding="utf-8", check=True

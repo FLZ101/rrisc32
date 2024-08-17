@@ -34,7 +34,10 @@ public:
 
   void run();
 
-  void befWm(u32 addr, unsigned n) override {}
+  void befWm(u32 addr, unsigned n) override {
+    LOG("befWm", toHexStr(addr, false, false), n);
+  }
+
   void aftWm(u32 addr, unsigned n) override {}
 
   void ecall() override;

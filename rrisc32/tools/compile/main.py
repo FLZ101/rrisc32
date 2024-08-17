@@ -50,9 +50,10 @@ class InputAction(Action):
 
 def once(func):
     def _f(self, *args, **kwargs):
-        if not getattr(self, '_done', False):
+        if not getattr(self, "_done", False):
             self._done = True
             func(self, *args, **kwargs)
+
     return _f
 
 
@@ -253,7 +254,7 @@ def main():
             if infile.endswith(".c"):
                 actions.append(
                     AssembleAction(
-                        CompileAction(InputAction(infile), mktemp(".s", infile), cpp_args), args.o
+                        CompileAction(InputAction(infile), infile + ".s", cpp_args), args.o
                     )
                 )
             elif infile.endswith(".s"):
@@ -262,9 +263,7 @@ def main():
             for infile in infiles:
                 if infile.endswith(".c"):
                     actions.append(
-                        AssembleAction(
-                            CompileAction(InputAction(infile), mktemp(".s", infile), cpp_args)
-                        )
+                        AssembleAction(CompileAction(InputAction(infile), infile + ".s", cpp_args))
                     )
                 elif infile.endswith(".s"):
                     actions.append(AssembleAction(InputAction(infile)))
@@ -278,12 +277,12 @@ def main():
             if infile.endswith(".c"):
                 inacts.append(
                     AssembleAction(
-                        CompileAction(InputAction(infile), mktemp(".s", infile), cpp_args),
-                        mktemp(".o", infile),
+                        CompileAction(InputAction(infile), infile + ".s", cpp_args),
+                        infile + ".o",
                     )
                 )
             elif infile.endswith(".s"):
-                inacts.append(AssembleAction(InputAction(infile), mktemp(".o", infile)))
+                inacts.append(AssembleAction(InputAction(infile), infile + ".o"))
             elif infile.endswith(".o"):
                 inacts.append(InputAction(infile))
             elif infile.endswith(".a"):
