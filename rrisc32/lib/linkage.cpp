@@ -298,7 +298,12 @@ void Linker::concatenateISecs() {
       u8 n = 0;
       if (!log2(sec->get_addr_align(), n) || n > elf::RRISC32_MAX_ALIGN)
         THROW(LinkageError, "invalid section alignment", sec->get_addr_align());
-      offset = P2ALIGN(offset, n);
+      u64 offset_new = P2ALIGN(offset, n);
+      if (offset_new > offset) {
+        oSec->bb.append(offset_new - offset, '\0');
+        offset = offset_new;
+      }
+
       iSec->addr = offset;
 
       if (name != ".bss")
