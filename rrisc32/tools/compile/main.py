@@ -150,14 +150,17 @@ class MIAction(Action):
 
 
 class LinkAction(MIAction):
-    def __init__(self, inacts: list[Action | MOAction], outfile: str) -> None:
+    def __init__(
+        self, inacts: list[Action | MOAction], outfile: str, linker_args: list[str] = []
+    ) -> None:
         super().__init__(inacts, outfile)
+        self._linker_args = linker_args
 
     @once
     def run(self):
         infiles = self.getInfiles()
         exe = os.path.join(binDir, "rrisc32-link")
-        subprocess.run([exe, "-o", self._outfile] + infiles, check=True)
+        subprocess.run([exe, "-o", self._outfile] + self._linker_args + infiles, check=True)
 
     def getOutfile(self):
         self.run()
@@ -192,6 +195,12 @@ def main():
     parser.add_argument(
         "--archive", action="store_true", help="Create a static library rather than an executable."
     )
+    parser.add_argument(
+        "--Wl",
+        action="append",
+        metavar="<options>",
+        help="Pass comma-separated <options> on to the linker.",
+    )
     parser.add_argument("--optimize", action="store_true", help="Enable optimizations.")
     parser.add_argument("-o", metavar="<outfile>")
     parser.add_argument("infiles", metavar="<infile>", nargs="+")
@@ -221,6 +230,30 @@ def main():
         cpp_args.append(f"-I{x}")
     if not args.nostdinc:
         cpp_args.append(f"-I{incDir}")
+
+    # --Wl=--a,--b=10,-20,--c
+    linker_args = []
+    for x in args.Wl or []:
+
+        def _cook(x: str):
+            x: list[str] = x.split(",")
+            x = [_.strip() for _ in x]
+
+            y = []
+            state = ""
+            for i in range(len(x)):
+                match state:
+                    case "=":
+                        y[-1] += "," + x[i]
+                        if x[i].startswith("--"):
+                            state = ""
+                    case _:
+                        y.append(x[i])
+                        if "=" in x[i]:
+                            state = "="
+            return y
+
+        linker_args.extend(_cook(x))
 
     for infile in infiles:
         if infile[-2:] in [".c", ".s", ".o", ".a"]:
@@ -293,7 +326,7 @@ def main():
         else:
             inacts.insert(0, ExtractAction(InputAction(os.path.join(libDir, "libc.a"))))
             inacts.insert(0, InputAction(os.path.join(libDir, "crt.o")))
-            actions.append(LinkAction(inacts, args.o))
+            actions.append(LinkAction(inacts, args.o, linker_args))
 
     for act in actions:
         act.run()
