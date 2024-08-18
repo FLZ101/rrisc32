@@ -779,12 +779,12 @@ class Codegen(NodeVisitor):
         if isFuncBody:
             self._asm.emitPrelogue()
 
-        block_items = node.block_items or []
-        for _ in block_items:
+        for _ in node.block_items:
             self.visit(_)
 
         if isFuncBody:
-            if len(block_items) == 0 or not isinstance(block_items[-1], c_ast.Return):
+            assert len(node.block_items) > 0
+            if not isinstance(node.block_items[-1], c_ast.Return):
                 if self._func._name == 'main':
                     self._asm.load(getIntConstant(0))
                 self._asm.emitRet()

@@ -383,7 +383,8 @@ class Argument(Variable):
 
 
 class StrLiteral(LValue):
-    def __init__(self, s: str, sOrig: str, ty: Type) -> None:
+    def __init__(self, s: str, sOrig: str, ty: Optional[Type] = None) -> None:
+        ty = ty or getBuiltinType("char")
         super().__init__(ArrayType(ty, len(s)))
         self._s = s
         self._sOrig = sOrig
@@ -635,7 +636,7 @@ def promoteArgType(ty: Type):
 class Node(c_ast.Node):
     def __init__(self, v: Value | Type) -> None:
         match v:
-            case Constant() | Variable():
+            case Constant() | Variable() | StrLiteral():
                 self._value = v
             case _:
                 if type(v) is Value:  # a Type wrapper
@@ -1211,7 +1212,7 @@ class Sema(NodeVisitor):
                 # https://en.cppreference.com/w/c/language/string_literal
                 assert s.startswith('"') and s.endswith('"')
                 s = unescapeStr(s[1:-1] + "\0")
-                sLit = StrLiteral(s, node.value, getBuiltinType("char"))
+                sLit = StrLiteral(s, node.value)
                 self.setNodeValue(node, sLit)
                 return
 
@@ -1309,16 +1310,34 @@ class Sema(NodeVisitor):
         self.setNodeType(node, self.getNodeType(node.type))
 
     def visit_Compound(self, node: c_ast.Compound):
+        if node.block_items is None:
+            node.block_items = []
+
+        parent = self.getParent()
+        if isinstance(parent, c_ast.FuncDef):
+            # https://gcc.gnu.org/onlinedocs/gcc/Function-Names.html
+            sLit = StrLiteral(self._func._name, '"%s"' % self._func._name)
+            decl = c_ast.Decl(
+                "__func__",
+                [],
+                [],
+                ["static"],
+                [],
+                Node(Value(sLit.getType())),
+                Node(sLit),
+                None,
+            )
+            node.block_items.insert(0, decl)
+
         shouldEnter = True
-        match self.getParent():
+        match parent:
             case c_ast.FuncDef() | c_ast.For():
                 shouldEnter = False
 
         if shouldEnter:
             self.enterScope()
 
-        block_items = node.block_items or []
-        for _ in block_items:
+        for _ in node.block_items:
             self.visit(_)
 
         if shouldEnter:
