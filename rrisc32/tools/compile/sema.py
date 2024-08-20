@@ -71,6 +71,10 @@ class VoidType(Type):
         self._name = "void"
 
 
+def isVoid(ty: Type):
+    return isinstance(ty, VoidType)
+
+
 class IntType(Type):
     def __init__(self, name: str, size: int, unsigned=False, alignment: int = 0):
         self._name = name
@@ -872,7 +876,7 @@ class Sema(NodeVisitor):
         if (
             isinstance(t1, PointerType)
             and isinstance(t2, ArrayType)
-            and isCompatible(t1._base, t2._base)
+            and (isCompatible(t1._base, t2._base) or isVoid(t1._base))
             and isinstance(v2, LValue)
         ):
             match v2:
@@ -880,7 +884,7 @@ class Sema(NodeVisitor):
                     return Node(SymConstant(v2._label, t1))
                 case StrLiteral():
                     self._ctx.addStr(v2)
-                    return Node(SymConstant(v2._label, PointerType(t2._base)))
+                    return Node(SymConstant(v2._label, PointerType(t1._base)))
                 case _:
                     return res
 
@@ -1009,8 +1013,7 @@ class Sema(NodeVisitor):
         dim = node.dim
         if dim:
             dim = self.getNodeIntConstant(node.dim)._i
-            if dim < 1:
-                raise CCError("not greater than zero")
+            assert dim >= 0
 
         self.setNodeType(node, ArrayType(self.getNodeType(node.type), dim))
 
@@ -1294,7 +1297,7 @@ class Sema(NodeVisitor):
                 break
 
             ty = self.getNodeType(arg)
-            if isinstance(ty, VoidType):
+            if isVoid(ty):
                 if n != 1:
                     raise CCError("'void' must be the only argument")
                 # ignore the difference between f(void) and f()
@@ -1370,7 +1373,7 @@ class Sema(NodeVisitor):
                         raise CCError("not a struct")
             case "->":
                 match ty:
-                    case PointerType(StructType()):
+                    case PointerType(_base=StructType()):
                         field = ty._base.getField(node.field.name)
                         # translate foo->x to *(__type(x)*)((void *)foo + __offset(x))
                         addr = node.name
@@ -1942,11 +1945,11 @@ class Sema(NodeVisitor):
     def visit_Return(self, node: c_ast.Return):
         ret = self._func._type._ret
         if node.expr:
-            if isinstance(ret, VoidType):
+            if isVoid(ret):
                 raise CCError("'return' with a value, in function returning void")
             node.expr = self.convert(ret, node.expr)
         else:
-            if not isinstance(ret, VoidType):
+            if not isVoid(ret):
                 raise CCError("'return' with no value, in function returning non-void")
 
     def visit_If(self, node: c_ast.If):
