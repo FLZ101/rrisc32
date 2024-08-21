@@ -22,14 +22,16 @@ int setjmp(jmp_buf env) {
 void longjmp(jmp_buf env, int status) {
   // clang-format off
   #pragma ASM \
-    lw a0, fp, 8; \
+    lw a0, fp, 8;  \
     lw a1, fp, 12; \
-    lw sp, a0, 8; \
-    lw t0, a0, 0; \
-    sw sp, t0, 0; \
-    lw t0, a0, 4; \
-    sw sp, t0, 4; \
-    mv fp, sp
+    lw sp, a0, 8;  \
+    lw t0, a0, 0;  \
+    sw sp, t0, 0;  \
+    lw t0, a0, 4;  \
+    sw sp, t0, 4;  \
+    mv fp, sp;     \
+    seqz a0, a1;   \
+    add a0, a0, a1
   // clang-format on
   return;
 }
