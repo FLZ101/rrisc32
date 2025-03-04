@@ -25,7 +25,7 @@ def get_run(line: str) -> Optional[Run]:
 
     i = cmd.rfind("|")
     if i != -1:
-        last = cmd[i + 1 :].strip()
+        last = cmd[i + 1 :].strip().lower()
         if last.startswith("filecheck "):
             cmd = cmd[:i].strip()
             check = "CHECK"
