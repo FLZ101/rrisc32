@@ -1,0 +1,7 @@
+{
+  "name": "rrisc32",
+  "build": {
+    "dockerfile": "../Containerfile",
+    "context": ".."
+  }
+}
